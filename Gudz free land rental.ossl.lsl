@@ -327,6 +327,7 @@ string daysToHumanFormat(float indays)
 {
     integer days = (integer)indays;
     integer hours = (integer)((indays - days) * 24);
+    integer minutes = (integer)(((indays - days) * 24 - hours) * 60);
 
     integer years = 0;
     while (days >= 365)
@@ -354,18 +355,24 @@ string daysToHumanFormat(float indays)
     else if (months > 0)
     {
         timeString += (string)months + " month" + (months > 1 ? "s" : "");
-        if (days > 0 || hours > 0)
+        if (days > 0 || hours > 0 || minutes > 0)
             timeString += " ";
     }
     else if (days > 0)
     {
         timeString += (string)days + " day" + (days > 1 ? "s" : "");
-        if (hours > 0)
+        if (hours > 0 || minutes > 0)
             timeString += " ";
     }
     if (hours > 0)
     {
         timeString += (string)hours + " hour" + (hours > 1 ? "s" : "");
+        if (minutes > 0)
+            timeString += " ";
+    }
+    if (minutes > 0)
+    {
+        timeString += (string)minutes + " minute" + (minutes > 1 ? "s" : "");
     }
 
     if (timeString == "")
