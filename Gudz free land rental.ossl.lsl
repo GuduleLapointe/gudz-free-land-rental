@@ -75,7 +75,6 @@ list textureSides = [ 1,3 ];
 //string otherTexture = TEXTURE_BLANK;
 
 string configFile = ".config";
-string statusFile = "~status";
 integer configured = FALSE;
 key httpNotecardId;
 
