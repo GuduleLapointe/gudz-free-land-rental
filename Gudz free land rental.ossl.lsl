@@ -1,20 +1,51 @@
-// Gudule's free land rental
-// Version: 1.4.6
-// Author: Gudule Lapointe gudule@speculoos.world
-// Licence:  GNU Affero General Public License
-
-// Allow to rent land for free, requiring the user to click
-// regularly on the rental panel to keep the parcel.
-// The land is technically sold as with viewer buy/send land so
-// the user has full ownership and full control on his parcel,
-// no need of the group trick. Expired or abandonned land is sold
-// back to the vendor owner.
-
-// IMPORTANT:
-// - Disallow land join,split and resell in the Estate settings
-// - The vendor HAS TO BE outside the rented land. Place it at 1 meter
-// of the rented land border (outside) and make sure the yellow
-// positioning mark is inside.
+/**
+ * Gudule's free land rental
+ *
+ * @Version 1.5-dev
+ * @author Gudule Lapointe gudule.lapointe@speculoos.world:8002
+ * @licence  GNU Affero General Public License
+ *
+ * Allow to rent land for free, requiring the user to click regularly on the
+ * rental panel to keep the parcel. The land is technically sold as with viewer
+ * buy/send land so the user has full ownership and full control on his parcel,
+ * no need of the group trick. Expired or abandonned land is sold back to the
+ * vendor owner.
+ *
+ * IMPORTANT:
+ * - Disable land join,split and resell in your Estate settings
+ * - The terminal HAS TO BE outside the rented land. Place it at 1 meter of the
+ *   rented land border (outside) and adjust to make sure the yellow positioning
+ *   mark appears inside.
+ *
+ * Configuration:
+ * - With Object Description :
+ *   Put these values, in this order, in the main prim description, separated by commas
+ *   DURATION,MAX_DURATION,MAX_PRIMS,RENEWABLE,EXPIRE_REMINDER,EXPIRE_GRACE
+ *
+ * - With a notecard:
+ *   Create a note card named ".config" including these settings:
+ *   // Base config (required)
+ *     duration = 30 // number of days, can be decimal for shorter periods
+ *     maxduration = 365 // number of days, can be decimal for shorter periods
+ *     maxprims = 1000 // Note sure we use it, though
+ *     renewable =
+ *     expirereminder =
+ *     expiregrace =
+ *
+ *   // Optional
+ *     *     fontname =
+ *     fontsize =
+ *     lineheight =
+ *     margin =
+ *     textcolor =
+ *     backgroundcolor =
+ *     position =
+ *     croptofit =
+ *     texturewidth =
+ *     textureheight =
+ *     texturesides") textureSides = llParseString2List(val, ",", " =
+ *
+ */
 
 // User configurable variables:
 integer DEBUG = FALSE;    // set to TRUE to see debug info
@@ -32,18 +63,19 @@ vector SIZE_LEASED = <1,0.2,0.125>;        // the signs size when rented (it wil
 
 string configFile = ".config";
 string statusFile = "~status";
+integer configured = FALSE;
 
 // End of user configurable variables
 
 // Put this in the Description of the sign prim or you will get default ones
-// PERIOD,MAXPERIOD,PRIMMAX,IS_RENEWABLE,RENTWARNING,GRACEPERIOD
+// DURATION,MAX_DURATION,MAX_PRIMS,RENEWABLE,EXPIRE_REMINDER,EXPIRE_GRACE
 //
-// PERIOD: rental and renewal period in days
-// MAXPERIOD: the maximum total rental, renewals included
-// PRIMMAX (obsolete, calculated automatically)
-// IS_RENEWABLE: if set to 1, or TRUE, user can renew, if set to 0, the user cannot renew the same plot
-// RENTWARNING: when to send an IM warning for renewal, in number of days before the lease expiration (if IS_RENEWABLE)
-// GRACEPERIOD: number of days allowed to miss claiming before it really expires
+// DURATION: rental and renewal period in days
+// MAX_DURATION: the maximum total rental, renewals included
+// MAX_PRIMS (obsolete, calculated automatically)
+// RENEWABLE: if set to 1, or TRUE, user can renew, if set to 0, the user cannot renew the same plot
+// EXPIRE_REMINDER: when to send an IM warning for renewal, in number of days before the lease expiration (if RENEWABLE)
+// EXPIRE_GRACE: number of days allowed to miss claiming before it really expires
 
 // Copyright (C) 2016  Gudule Lapointe gudule@speculoos.world
 // Based "No Money Rental (Vendor).lsl" script from Outworldz website
@@ -70,24 +102,23 @@ string  DEBUGINFO  = "0.041,1,100,1,0.0104,1"; // Default config info in debug m
 //string  debugINFO = "0.00347222,0.00694455,100,1,0.00138889, 0.00138889";  //fast timers (5 minutes rental, max 10 min, warn 2 min before, grace 1 minute))
 // Debug config info, 5 minutes per claim, 10 minutes max, 100 prims, 2 minute warning, grace period 1 minutes
 
-//
-// don't muck below this, code begins.
-//
-// The  Description ( config info) of the sign is stored into these variables:
+/**
+ * DO NOT CHANGE ANYTHING BELOW THIS.
+ * Or don't complain.
+ */
 
-float PERIOD;     // DAYS  lease is claimed
-integer PRIMMAX;    // number of prims
-float MAXPERIOD;  // maximum length in days
-float RENTWARNING ; //Day allowed to renew earlier
-float GRACEPERIOD ; // Days allowed to miss payment
+float DURATION;     // DAYS  lease is claimed
+float MAX_DURATION;  // maximum length in days
+integer MAX_PRIMS;    // number of prims
+integer RENEWABLE = FALSE; // can they renew?
+float EXPIRE_REMINDER ; //Day allowed to renew earlier
+float EXPIRE_GRACE ; // Days allowed to miss payment
 
-list my_data;
+vector TERMINAL_POS; // Last position of the terminal
 integer MY_STATE = 0;  // 0 is unleased, 1 = leased
 string LEASER = "";    // name of lessor
 key LEASERID;          // their UUID
-
 integer LEASED_UNTIL; // unix time stamp
-integer IS_RENEWABLE = FALSE; // can they renew?
 integer DAYSEC = 86400;         // a constant
 integer SENT_WARNING = FALSE;    // did they get an im?
 integer SENT_PRIMWARNING = FALSE;    // did they get an im about going over prim count?
@@ -100,6 +131,19 @@ vector signPos;
 integer parcelArea;
 list parcelDetails;
 
+integer IDX_DURATION = 0;
+integer IDX_MAX_DURATION = 1;
+integer IDX_MAX_PRIMS = 2;
+integer IDX_RENEWABLE = 3;
+integer IDX_EXPIRE_REMINDER = 4;
+integer IDX_EXPIRE_GRACE = 5;
+integer IDX_MY_STATE = 6;
+integer IDX_LEASER = 7;
+integer IDX_LEASERID = 8;
+integer IDX_LEASED_UNTIL = 9;
+integer IDX_SENT_WARNING = 10;
+integer IDX_TERMINAL_POS = 11;
+integer firstLaunch = TRUE;
 
 debug(string data)
 {
@@ -111,20 +155,27 @@ statusUpdate(string data)
     llOwnerSay(data);
 }
 
-integer dialogActiveFlag ;    // true when we have up a dialog box, used by the timer to clear out the listener if no response is given
+integer isRented()
+{
+    string description = llGetObjectDesc(); // Get the object's description
+    list my_data = llParseString2List(description, [","], []); // Parse the CSV data
+    return ( llList2Integer(my_data, IDX_MY_STATE) == TRUE );
+}
+
+integer dialogActiveFlag ;    // TRUE when we have up a dialog box, used by the timer to clear out the listener if no response is given
 dialog()
 {
     llListenRemove(listener);
     integer channel = llCeil(llFrand(1000000)) + 100000 * -1; // negative channel # cannot be typed
     listener = llListen(channel,"","","");
-    if(MY_STATE == 0)
+    if(isRented() )
     {
-        llDialog(touchedKey,"Do you wish to claim this parcel?",["Yes","-","No"],channel);
-    } else {
         llDialog(touchedKey,
         "Leased until " + Unix2PST_PDT(LEASED_UNTIL)
         + ". Abandon land?"
         ,["Abandon","-","No"],channel);
+    } else {
+        llDialog(touchedKey,"Do you wish to claim this parcel?",["Yes","-","No"],channel);
     }
     llSetTimerEvent(30);
     llSetText("",<1,0,0>, 1.0);
@@ -135,7 +186,7 @@ dialog()
 
 string get_rentalbox_info()
 {
-    return llGetRegionName()  + " @ " + (string)parcelPos + " (Leaser: \"" + LEASER + "\", Expire: " + timespan(LEASED_UNTIL - llGetUnixTime()) + ")";
+    return llGetRegionName()  + " @ " + (string)parcelPos + " (Renter: \"" + LEASER + "\", Expire: " + timespan(LEASED_UNTIL - llGetUnixTime()) + ")";
 }
 string get_rentalbox_url()
 {
@@ -159,9 +210,10 @@ string timespan(integer time)
 load_data()
 {
     integer len;
-    my_data = llCSV2List(llGetObjectDesc());
+    string desc = llGetObjectDesc();
+    list my_data = llCSV2List(desc);
 
-    if (llStringLength(llGetObjectDesc()) < 5) // SL does not allow blank description
+    if (llStringLength(desc) < 5) // SL does not allow blank description
     {
         my_data = llCSV2List(initINFO);
     }
@@ -170,53 +222,53 @@ load_data()
         my_data = llCSV2List(DEBUGINFO);    // 5 minute fast timers
     }
 
+    // Should be 6 for unconfigured and 11 for configured and in action
     len = llGetListLength(my_data);
 
-    PERIOD = (float) llList2String(my_data,0);
-    debug("PERIOD FROM DESCRIPTION " + (string) PERIOD);
+    // Extract data
+    DURATION = llList2Float(my_data, IDX_DURATION);
+    MAX_DURATION = llList2Float(my_data, IDX_MAX_DURATION);
+    MAX_PRIMS = llGetParcelMaxPrims(parcelPos, FALSE); // Get from parcel
+    RENEWABLE = llList2Integer(my_data, IDX_RENEWABLE);
+    EXPIRE_REMINDER = llList2Float(my_data, IDX_EXPIRE_REMINDER);
+    EXPIRE_GRACE = llList2Float(my_data, IDX_EXPIRE_GRACE);
 
-    MAXPERIOD = (float) llList2String(my_data,1);
-    debug("MAXPERIOD FROM DESCRIPTION " + (string) MAXPERIOD);
+    string mystate_check = llList2String(my_data, IDX_MY_STATE);
+    MY_STATE = (integer)mystate_check;
+    LEASER = llList2String(my_data, IDX_LEASER);
+    LEASERID = (key)llList2String(my_data, IDX_LEASERID);
+    LEASED_UNTIL = llList2Integer(my_data, IDX_LEASED_UNTIL);
+    SENT_WARNING = llList2Integer(my_data, IDX_SENT_WARNING);
+    TERMINAL_POS = llList2Vector(my_data, IDX_TERMINAL_POS);
 
-    //PRIMMAX = (integer) llList2String(my_data,2);
-    PRIMMAX = llGetParcelMaxPrims(parcelPos, FALSE);
-    debug("PRIMMAX FROM DESCRIPTION : " + (string) PRIMMAX);
-
-    IS_RENEWABLE = (integer) llList2String(my_data, 3);
-    debug("IS_RENEWABLE FROM DESCRIPTION : " + (string) IS_RENEWABLE);
-
-    RENTWARNING = (float) llList2String(my_data, 4);
-    debug("RENTWARNING FROM DESCRIPTION : " + (string) RENTWARNING);
-
-    GRACEPERIOD = (float) llList2String(my_data, 5);
-    debug("GRACEPERIOD FROM DESCRIPTION : " + (string) GRACEPERIOD);
-
-    MY_STATE = (integer) llList2String(my_data, 6);
-    debug("MY_STATE FROM DESCRIPTION : " + (string) MY_STATE);
-
-    LEASER = llList2String(my_data, 7);
-    debug("LEASER FROM DESCRIPTION : " + (string) LEASER);
-
-    LEASERID = (key) llList2String(my_data, 8);
-    debug("LEASERID FROM DESCRIPTION : " + (string) LEASERID);
-
-    LEASED_UNTIL = (integer) llList2String(my_data, 9);
-    debug("LEASED_UNTIL FROM DESCRIPTION : " + (string) LEASED_UNTIL);
-
-    SENT_WARNING = (integer) llList2String(my_data, 10);
-    debug("SENT_WARNING FROM DESCRIPTION : " + (string) SENT_WARNING);
-
+    configured = ( mystate_check != "" );
 }
 
 save_data()
 {
     debug("Data saved in description");
-    my_data =  [(string)PERIOD, (string)MAXPERIOD, (string)PRIMMAX, (string)IS_RENEWABLE, (string) RENTWARNING, (string) GRACEPERIOD, (string)MY_STATE, (string)LEASER, (string) LEASERID,  (string)LEASED_UNTIL, (string)SENT_WARNING  ];
-    llSetObjectDesc(llList2CSV(my_data));
-    initINFO = llList2CSV(my_data);   // for debugging in LSL Editor.
+    // Prepare data, don
+    list my_data =  [
+    unTrailFloat(DURATION),                 // 0: IDX_DURATION
+    unTrailFloat(MAX_DURATION),              // 1: IDX_MAX_DURATION
+    "",                // 2: IDX_MAX_PRIMS (deprecated, dynamic value)
+    (string)RENEWABLE,           // 3: IDX_RENEWABLE
+    unTrailFloat(EXPIRE_REMINDER),            // 4: IDX_EXPIRE_REMINDER
+    unTrailFloat(EXPIRE_GRACE),            // 5: IDX_EXPIRE_GRACE
+    (string)MY_STATE,               // 6: IDX_MY_STATE
+    "",                 // 7: IDX_LEASER (deprecated, dynamic value)
+    ( LEASERID == NULL_KEY ? "" : (string)LEASERID ),  // 8: IDX_LEASERID
+    (string)LEASED_UNTIL,           // 9: IDX_LEASED_UNTIL
+    (string)SENT_WARNING,           // 10: IDX_SENT_WARNING
+    unTrailVector(TERMINAL_POS)           // 11: IDX_TERMINAL_POS
+    ];
+    string descConfig = llDumpList2String(my_data);
+    llSetObjectDesc(descConfig);
+    llOwnerSay("descConfig " + descConfig);
+    initINFO = descConfig;   // for debugging in LSL Editor.
     DEBUGINFO = initINFO;  // for debugging in fast mode
 
-    load_data() ;    // to print it in case of debug
+    getConfig() ;    // to print it in case of debug
 }
 
 reclaimParcel()
@@ -227,7 +279,7 @@ reclaimParcel()
         PARCEL_DETAILS_NAME, parcelArea + " sqm parcel for rent",
         PARCEL_DETAILS_DESC, "Free rental; "
         + parcelArea + " sqm; "
-        + PRIMMAX + " prims allowed. "
+        + MAX_PRIMS + " prims allowed. "
         + "Click the rental sign to claim this land.",
         PARCEL_DETAILS_OWNER, llGetOwner(),
         PARCEL_DETAILS_GROUP, llList2Key(llGetObjectDetails(llGetKey(), [OBJECT_GROUP]), 0),
@@ -240,18 +292,16 @@ string strReplace(string str, string search, string replace) {
     return llDumpList2String(llParseStringKeepNulls((str),[search],[]),replace);
 }
 
-
-
-// Convert Unix Time to SLT, identifying whether it is currently PST or PDT (i.e. Daylight Saving aware)
+// timestampToDate Unix Time to SLT, identifying whether it is currently PST or PDT (i.e. Daylight Saving aware)
 // Omei Qunhua December 2013
 
 list weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 string Unix2PST_PDT(integer insecs)
 {
-    string str = Convert(insecs - (3600 * 8) );   // PST is 8 hours behind GMT
+    string str = timestampToDate(insecs - (3600 * 8) );   // PST is 8 hours behind GMT
     if (llGetSubString(str, -3, -1) == "PDT")     // if the result indicates Daylight Saving Time ...
-        str = Convert(insecs - (3600 * 7) );      // ... Recompute at 1 hour later
+        str = timestampToDate(insecs - (3600 * 7) );      // ... Recompute at 1 hour later
     return str;
 }
 
@@ -267,7 +317,58 @@ integer DaysPerMonth(integer year, integer month)
     return 30 + ( (month + (month > 7) ) & 1);           // Odd months up to July, and even months after July, have 31 days
 }
 
-string Convert(integer insecs)
+string daysToTimeString(float indays)
+{
+    integer days = (integer)indays;
+    integer hours = (integer)((indays - days) * 24);
+
+    integer years = 0;
+    while (days >= 365)
+    {
+        years++;
+        days -= 365;
+    }
+
+    integer months = 0;
+    while (days >= 30)
+    {
+        months++;
+        days -= 30;
+    }
+
+    string timeString = "";
+    if (years > 0)
+    {
+        timeString += (string)years + " year" + (years > 1 ? "s" : "");
+        if (days >= 5) // Display years and days for 5 or more remaining days
+            timeString += " " + (string)days + " day" + (days > 1 ? "s" : "");
+        else if (days > 0) // Display years and remaining days for less than 5 remaining days
+            timeString += " " + (string)days + " day" + (days > 1 ? "s" : "") + " remaining";
+    }
+    else if (months > 0)
+    {
+        timeString += (string)months + " month" + (months > 1 ? "s" : "");
+        if (days > 0 || hours > 0)
+            timeString += " ";
+    }
+    else if (days > 0)
+    {
+        timeString += (string)days + " day" + (days > 1 ? "s" : "");
+        if (hours > 0)
+            timeString += " ";
+    }
+    if (hours > 0)
+    {
+        timeString += (string)hours + " hour" + (hours > 1 ? "s" : "");
+    }
+
+    if (timeString == "")
+        timeString = "0 minutes";
+
+    return timeString;
+}
+
+string timestampToDate(integer insecs)
 {
     integer w; integer month; integer daysinyear;
     integer mins = insecs / 60;
@@ -329,7 +430,7 @@ checkValidPosition()
     }
 }
 
-string fontName = "Impact";
+string fontName = "Sans";
 integer fontSize = 36;
 integer lineHeight = 36;
 integer margin = 24;
@@ -344,43 +445,46 @@ list textureSides = [ 1,3 ];
 
 getConfig()
 {
-    if(llGetInventoryType(configFile) != INVENTORY_NOTECARD) {
+    load_data();
+    if (llGetInventoryType(configFile) != INVENTORY_NOTECARD)
+    {
         debug("no config file, using defaults");
         return;
     }
+
     list lines = llParseString2List(osGetNotecard(configFile), "\n", "");
     integer count = llGetListLength(lines);
     integer i = 0;
     do
     {
         string line = llStringTrim(llList2String(lines, i), STRING_TRIM);
-        if(llGetSubString(line, 0, 1) != "//"
-        && llSubStringIndex(line, "=") > 0 )
+        if (llGetSubString(line, 0, 1) != "//" && llSubStringIndex(line, "=") > 0)
         {
-
             list params = llParseString2List(line, ["="], []);
-            string var = llStringTrim(llList2String(params, 0), STRING_TRIM);
+            string var = llToLower(llStringTrim(llList2String(params, 0), STRING_TRIM)); // Convert to lowercase
             string val = llStringTrim(llList2String(params, 1), STRING_TRIM);
             debug(var + "=" + val);
-            if(var == "fontName")  fontName = val;
-            else if(var == "fontSize") fontSize = (integer)val;
-            else if(var == "lineHeight") lineHeight = (integer)val;
-            else if(var == "margin") margin = (integer)val;
-            else if(var == "textColor") textColor = val;
-            else if(var == "backgroundColor") backgroundColor = val;
-            else if(var == "position") position = val;
-            else if(var == "cropToFit") cropToFit = (integer)val;
-            else if(var == "textureWidth") textureWidth = (integer)val;
-            else if(var == "textureHeight") textureHeight = (integer)val;
-            else if(var == "textureSides") textureSides = llParseString2List(val, ",", "");
 
-            else if(var == "parcelDistance") parcelDistance = (vector)val;
-            else if(var == "checkerLink") checkerLink = (integer)val;
-            else if(var == "texture_expired") texture_expired = val;
-            else if(var == "texture_unleased") texture_unleased = val;
-            else if(var == "texture_busy") texture_busy = val;
-            else if(var == "SIZE_UNLEASED") SIZE_UNLEASED = (vector)val;
-            else if(var == "SIZE_LEASED") SIZE_LEASED = (vector)val;
+            // Existing variables
+            if (var == "fontname") fontName = val;
+            else if (var == "fontsize") fontSize = (integer)val;
+            else if (var == "lineheight") lineHeight = (integer)val;
+            else if (var == "margin") margin = (integer)val;
+            else if (var == "textcolor") textColor = val;
+            else if (var == "backgroundcolor") backgroundColor = val;
+            else if (var == "position") position = val;
+            else if (var == "croptofit") cropToFit = (integer)val;
+            else if (var == "texturewidth") textureWidth = (integer)val;
+            else if (var == "textureheight") textureHeight = (integer)val;
+            else if (var == "texturesides") textureSides = llParseString2List(val, ",", "");
+
+            // New variables from getConfig function
+            else if (var == "duration") DURATION = (float)val;
+            else if (var == "maxduration") MAX_DURATION = (float)val;
+            else if (var == "maxprims") MAX_PRIMS = (integer)val;
+            else if (var == "renewable") RENEWABLE = (integer)val;
+            else if (var == "expirereminder") EXPIRE_REMINDER = (float)val;
+            else if (var == "expiregrace") EXPIRE_GRACE = (float)val;
         }
         i++;
     }
@@ -475,7 +579,37 @@ setTexture(string texture, integer face)
         llSetTexture(texture,face);
 }
 
-integer firstLaunch = TRUE;
+string rentalConditions() {
+    return "\nRental conditions: "
+    + "\n    Duration " + daysToTimeString(DURATION)
+    + "\n    Renewable " + ( RENEWABLE ? "yes" : "no")
+    + ( RENEWABLE && MAX_DURATION > 0 ? " (maximum " + daysToTimeString(MAX_DURATION) + ")" : "" )
+    + "\n    Max prims " + MAX_PRIMS
+    + "\n    Expiration reminder " + daysToTimeString(EXPIRE_REMINDER) + " before"
+    + "\n    Grace period " + daysToTimeString(EXPIRE_GRACE) + " after"
+    + "\nPlease read the covenant before renting"
+    ;
+}
+
+string unTrailFloat(float value)
+{
+    string str = (string)value;
+    integer len = llStringLength(str);
+    while (len > 1 && llGetSubString(str, len - 1, len - 1) == "0")
+    {
+        len--;
+    }
+    if (len > 1 && llGetSubString(str, len - 1, len - 1) == ".")
+    {
+        len--;
+    }
+    return llStringTrim(llGetSubString(str, 0, len - 1), STRING_TRIM);
+}
+
+string unTrailVector(vector v)
+{
+    return "<" + unTrailFloat(v.x) + "," + unTrailFloat(v.y) +","+ unTrailFloat(v.z) + ">";
+}
 
 default
 {
@@ -486,19 +620,25 @@ default
         checkValidPosition();
 
         getConfig();
-        load_data();
+        llWhisper( 0, rentalConditions() );
+
         llSetScale(SIZE_LEASED);
         setTexture(texture_expired,textureSides);
-        load_data();
-        if(firstLaunch)
-        {
-            firstLaunch = FALSE;
-            statusUpdate("Activating...");
-            if (MY_STATE == 0)
-            state unleased;
-            else if (MY_STATE == 1)
+        if(isRented()) {
             state leased;
         }
+        else if(configured) {
+            state unleased;
+        }
+        // if(firstLaunch)
+        // {
+        //     firstLaunch = FALSE;
+        //     statusUpdate("Activating...");
+        //     if (MY_STATE == 0)
+        //     state unleased;
+        //     else if (MY_STATE == 1)
+        //     state leased;
+        // }
         llOwnerSay("Click this rental box to activate after configuring the DESCRIPTION.");
         llSetText("DISABLED",<0,0,0>, 1.0);
     }
@@ -511,7 +651,7 @@ default
         if (touchedKey == llGetOwner())
         {
             statusUpdate("Activating...");
-            load_data();
+            getConfig();
             if (MY_STATE == 0)
                 state unleased;
             else if (MY_STATE == 1)
@@ -539,12 +679,12 @@ state unleased
     state_entry()
     {
         debug("state unleased");
-        load_data();
-        if (MY_STATE !=0 || PERIOD == 0)
+        getConfig();
+        if (MY_STATE !=0 || DURATION == 0)
         {
             debug("MY_STATE:" + (string) MY_STATE);
-            debug("PERIOD:" + (string) PERIOD);
-            debug("IS_RENEWABLE:" + (string) IS_RENEWABLE);
+            debug("DURATION:" + (string) DURATION);
+            debug("RENEWABLE:" + (string) RENEWABLE);
             llOwnerSay("Returning to default. Data is not correct.");
             state default;
         }
@@ -567,7 +707,7 @@ state unleased
         llSetTimerEvent(0);
         llListenRemove(listener);
 
-        load_data();
+        getConfig();
 
         if (message == "Yes")
         {
@@ -576,7 +716,7 @@ state unleased
             LEASER = llKey2Name(touchedKey);
             string shortName = llStringTrim(strReplace( llList2String(llParseStringKeepNulls(LEASER,["@"],[]), 0), ".", " "), STRING_TRIM);
             LEASERID = touchedKey;
-            LEASED_UNTIL = llGetUnixTime() + (integer) (DAYSEC * PERIOD);
+            LEASED_UNTIL = llGetUnixTime() + (integer) (DAYSEC * DURATION);
             debug("Remaining time:" +  timespan(llGetUnixTime()-LEASED_UNTIL));
 
             SENT_WARNING = FALSE;
@@ -586,7 +726,7 @@ state unleased
                 PARCEL_DETAILS_NAME, shortName + "'s land",
                 PARCEL_DETAILS_DESC, LEASER + "'s land; "
                     + parcelArea + " sqm; "
-                    + PRIMMAX + " prims allowed.",
+                    + MAX_PRIMS + " prims allowed.",
                 PARCEL_DETAILS_OWNER, LEASERID,
                 PARCEL_DETAILS_GROUP, NULL_KEY,
                 PARCEL_DETAILS_CLAIMDATE, 0];
@@ -620,17 +760,18 @@ state unleased
             if(touchedKey == llGetOwner()) checkValidPosition();
 
             debug("touch event in unleased");
-            load_data();
-            llInstantMessage(touchedKey, "Claim Info");
-
-            llInstantMessage(touchedKey, "Available for "  + (string)PERIOD + " days ");
-            llInstantMessage(touchedKey, "Max Lease Length: " + (string)MAXPERIOD + " days");
-            llInstantMessage(touchedKey, "Max Prims: " + (string)PRIMMAX);
-
-            if(llGetInventoryNumber(INVENTORY_NOTECARD) > 0 ) {
-                llGiveInventory(touchedKey,llGetInventoryName(INVENTORY_NOTECARD,0));
-                llInstantMessage(touchedKey, "Please read the covenant before renting");
-            }
+            getConfig();
+            llInstantMessage(touchedKey, rentalConditions() );
+            // llInstantMessage(touchedKey, "Claim Info");
+            //
+            // llInstantMessage(touchedKey, "Available for "  + (string)DURATION + " days ");
+            // llInstantMessage(touchedKey, "Max Lease Length: " + (string)MAX_DURATION + " days");
+            // llInstantMessage(touchedKey, "Max Prims: " + (string)MAX_PRIMS);
+            //
+            // if(llGetInventoryNumber(INVENTORY_NOTECARD) > 0 ) {
+            //     llGiveInventory(touchedKey,llGetInventoryName(INVENTORY_NOTECARD,0));
+            //     llInstantMessage(touchedKey, "Please read the covenant before renting");
+            // }
             dialog();
         }
     }
@@ -695,11 +836,11 @@ state leased
         debug("Leased mode");
         debug((string)llGetUnixTime());
 
-        load_data();
-        if (MY_STATE != 1 || PERIOD == 0 || LEASER == "")
+        getConfig();
+        if (MY_STATE != 1 || DURATION == 0 || LEASER == "")
         {
             debug("MY_STATE:" + (string) MY_STATE);
-            debug("PERIOD:" + (string) PERIOD);
+            debug("DURATION:" + (string) DURATION);
             debug("LEASER:" + (string) LEASER);
 
             MY_STATE = 0;
@@ -723,11 +864,11 @@ state leased
         dialogActiveFlag = FALSE;
         if (message == "Yes")
         {
-            load_data();
-            if (MY_STATE != 1 || PERIOD == 0 || LEASER == "")
+            getConfig();
+            if (MY_STATE != 1 || DURATION == 0 || LEASER == "")
             {
                 debug("MY_STATE:" + (string) MY_STATE);
-                debug("PERIOD:" + (string) PERIOD);
+                debug("DURATION:" + (string) DURATION);
                 debug("LEASER:" + (string) LEASER);
 
                 MY_STATE = 0;
@@ -735,16 +876,16 @@ state leased
                 statusUpdate("Returning to unleased. Data is not correct.");
                 state unleased;
             }
-            else if (IS_RENEWABLE)
+            else if (RENEWABLE)
             {
                 integer timeleft = LEASED_UNTIL - llGetUnixTime();
 
                 debug("Remaining time:" +  timespan(llGetUnixTime()-LEASED_UNTIL));
                 debug("DAYSEC:" + (string) DAYSEC);
                 debug("timeleft:" + (string) timeleft);
-                debug("MAXPERIOD:" + (string) MAXPERIOD);
+                debug("MAX_DURATION:" + (string) MAX_DURATION);
 
-                if (DAYSEC + timeleft > MAXPERIOD * DAYSEC)
+                if (DAYSEC + timeleft > MAX_DURATION * DAYSEC)
                 {
                     llInstantMessage(LEASERID,"Sorry, you can not claim more than the max time");
                 }
@@ -752,7 +893,7 @@ state leased
                 {
                     debug("Leased");
                     SENT_WARNING = FALSE;
-                    LEASED_UNTIL += (integer) PERIOD;
+                    LEASED_UNTIL += (integer) DURATION;
                     debug("Leased until " + (string)LEASED_UNTIL );
                     save_data();
                     llSetScale(SIZE_LEASED);
@@ -792,12 +933,12 @@ state leased
 
         debug("timer event in leased");
 
-        load_data();
+        getConfig();
 
-        if (MY_STATE != 1 || PERIOD == 0 || LEASER == "")
+        if (MY_STATE != 1 || DURATION == 0 || LEASER == "")
         {
             debug("MY_STATE:" + (string) MY_STATE);
-            debug("PERIOD:" + (string) PERIOD);
+            debug("DURATION:" + (string) DURATION);
             debug("LEASER:" + (string) LEASER);
 
             MY_STATE = 0;
@@ -808,12 +949,12 @@ state leased
 
         integer count = llGetParcelPrimCount(parcelPos,PARCEL_COUNT_TOTAL, FALSE);
 
-        if (count -1  > PRIMMAX && !SENT_PRIMWARNING) // no need to countthe sign, too.
+        if (count -1  > MAX_PRIMS && !SENT_PRIMWARNING) // no need to countthe sign, too.
         {
-            llInstantMessage(LEASERID, get_rentalbox_info() + " There are supposed to be no more than " + (string)PRIMMAX
+            llInstantMessage(LEASERID, get_rentalbox_info() + " There are supposed to be no more than " + (string)MAX_PRIMS
                 + " prims rezzed, yet there are "
                 +(string) count + " prims rezzed on this parcel. Plese remove the excess.");
-            llInstantMessage(llGetOwner(),  get_rentalbox_info() + " There are supposed to be no more than " + (string)PRIMMAX
+            llInstantMessage(llGetOwner(),  get_rentalbox_info() + " There are supposed to be no more than " + (string)MAX_PRIMS
                 + " prims rezzed, yet there are "
                 +(string) count + " prims rezzed on this parcel, warning sent to " + LEASER );
             SENT_PRIMWARNING = TRUE;
@@ -825,20 +966,20 @@ state leased
 
         debug("Remaining time:" +  timespan(llGetUnixTime()-LEASED_UNTIL));
 
-        if (IS_RENEWABLE)
+        if (RENEWABLE)
         {
 
             debug( (string) LEASED_UNTIL + " > " + (string) llGetUnixTime());
 
-            debug( "RENTWARNING * DAYSEC " + (string) (RENTWARNING * DAYSEC));
+            debug( "EXPIRE_REMINDER * DAYSEC " + (string) (EXPIRE_REMINDER * DAYSEC));
 
-            if (LEASED_UNTIL > llGetUnixTime() && LEASED_UNTIL - llGetUnixTime() < RENTWARNING * DAYSEC)
+            if (LEASED_UNTIL > llGetUnixTime() && LEASED_UNTIL - llGetUnixTime() < EXPIRE_REMINDER * DAYSEC)
             {
                 debug("Claim must be renewed");
                 setTexture(texture_expired,textureSides);
                 llSetText("Claim must be renewed!",<1,0,0>, 1.0);
             }
-            else if (LEASED_UNTIL < llGetUnixTime()  && llGetUnixTime() - LEASED_UNTIL < GRACEPERIOD * DAYSEC)
+            else if (LEASED_UNTIL < llGetUnixTime()  && llGetUnixTime() - LEASED_UNTIL < EXPIRE_GRACE * DAYSEC)
             {
                 if (!SENT_WARNING)
                 {
@@ -886,12 +1027,12 @@ state leased
 
         if(touchedKey == llGetOwner()) checkValidPosition();
 
-        load_data();
+        getConfig();
 
-        if (MY_STATE != 1 || PERIOD == 0 || LEASER == "" )
+        if (MY_STATE != 1 || DURATION == 0 || LEASER == "" )
         {
             debug("MY_STATE:" + (string) MY_STATE);
-            debug("PERIOD:" + (string) PERIOD);
+            debug("DURATION:" + (string) DURATION);
             debug("LEASER:" + (string) LEASER);
 
             MY_STATE = 0;
@@ -907,12 +1048,12 @@ state leased
         llInstantMessage(touchedKey,"Space currently rented by " + LEASER);
 
         // same as money
-        if (touchedKey == LEASERID && IS_RENEWABLE)
+        if (touchedKey == LEASERID && RENEWABLE)
         {
             string parcelName = (string)llGetParcelDetails(parcelPos, [PARCEL_DETAILS_NAME]);
             drawText(parcelName);
 
-            LEASED_UNTIL = llGetUnixTime() + (integer) (DAYSEC * PERIOD);
+            LEASED_UNTIL = llGetUnixTime() + (integer) (DAYSEC * DURATION);
             llInstantMessage(LEASERID, "Renewed until " + Unix2PST_PDT(LEASED_UNTIL));
             dialog();
         } else {
@@ -920,7 +1061,7 @@ state leased
         }
 
         // same as money
-        if (touchedKey == LEASERID && !IS_RENEWABLE)
+        if (touchedKey == LEASERID && !RENEWABLE)
         {
              llInstantMessage(LEASERID,"The parcel cannot be claimed again");
         }
