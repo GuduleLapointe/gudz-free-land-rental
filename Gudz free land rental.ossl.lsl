@@ -1,7 +1,7 @@
 /**
  * Gudule's free land rental
  *
- * @Version 1.5-dev
+ * @Version 1.5-dev-2
  * @author Gudule Lapointe gudule.lapointe@speculoos.world:8002
  * @licence  GNU Affero General Public License
  *
