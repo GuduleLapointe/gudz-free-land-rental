@@ -208,7 +208,7 @@ dialog()
 string parcelRentalInfo()
 {
     return llGetRegionName()  + " @ " + unTrailVector(parcelPos) +
-    "\n" + rentalInfo();
+    rentalInfo();
      // " (Renter: \"" + LEASER + "\", Expire: " + secondsToHumanFormat(LEASED_UNTIL - llGetUnixTime()) + ")";
 }
 string parcelURL()
@@ -493,16 +493,8 @@ getConfig()
 
     list lines = llParseString2List(osGetNotecard(configFile), "\n", "");
     loadConfigLines(lines);
-
-    save_data();
 }
 
-reloadConfig() {
-    save_data();
-    llOwnerSay("Reloading config");
-    getConfig();
-    llOwnerSay(rentalConditions());
-}
 loadConfigLines(list lines) {
     integer count = llGetListLength(lines);
     integer i = 0;
@@ -540,6 +532,12 @@ loadConfigLines(list lines) {
         i++;
     }
     while (i < count);
+}
+
+reloadConfig() {
+    llOwnerSay("Reloading config");
+    getConfig();
+    llOwnerSay(rentalConditions());
 }
 
 string cropText(string in, string fontname, integer fontsize,integer width)
@@ -1045,7 +1043,7 @@ state leased
                 //llSetPos(parcelPos);
                 //llReturnObjectsByOwner(LEASERID,  OBJECT_RETURN_PARCEL_OWNER);
                 llInstantMessage(LEASERID, "Your claim has expired. Please cleanup the parcel. Objects owned by you on the parcel will be returned soon.");
-                llInstantMessage(llGetOwner(), "Rental expired\n" + parcelRentalInfo());
+                llInstantMessage(llGetOwner(), "CLAIM EXPIRED: CLEANUP! -  " + parcelRentalInfo());
                 reclaimParcel();
                 MY_STATE = 0;
                 save_data();
@@ -1054,7 +1052,7 @@ state leased
         }
         else if (LEASED_UNTIL < llGetUnixTime())
         {
-            llInstantMessage(llGetOwner(), "Rental expired\n" + parcelRentalInfo());
+            llInstantMessage(llGetOwner(), "CLAIM EXPIRED: CLEANUP! -  " + parcelRentalInfo());
             debug("TIME EXPIRED. RETURNING TO DEFAULT");
             reclaimParcel();
             MY_STATE = 0;
