@@ -492,10 +492,11 @@ getConfig()
     }
 
     list lines = llParseString2List(osGetNotecard(configFile), "\n", "");
-    loadConfigLines(lines);
+    loadConfigLines(lines, TRUE); // Process lines with configURL parameter
 }
 
-loadConfigLines(list lines) {
+loadConfigLines(list lines, boolean processConfigURL)
+{
     integer count = llGetListLength(lines);
     integer i = 0;
     do
@@ -507,6 +508,13 @@ loadConfigLines(list lines) {
             string var = llToLower(llStringTrim(llList2String(params, 0), STRING_TRIM)); // Convert to lowercase
             string val = llStringTrim(llList2String(params, 1), STRING_TRIM);
             debug(var + "=" + val);
+
+            if (processConfigURL && var == "configurl") {
+                llOwnerSay("reading config from URL");
+                // Config URL is found, load config from the URL and stop processing local config
+                httpNotecardId = llHTTPRequest(url, [HTTP_METHOD, "GET", HTTP_MIMETYPE, "text/plain;charset=utf-8"], "");
+                return;
+            }
 
             // Existing variables
             if (var == "fontname") fontName = val;
