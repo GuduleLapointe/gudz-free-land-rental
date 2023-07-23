@@ -26,24 +26,24 @@
  *   Create a note card named ".config" including these settings:
  *   // Base config (required)
  *     duration = 30 // number of days, can be decimal for shorter periods
- *     maxduration = 365 // number of days, can be decimal for shorter periods
- *     maxprims = 1000 // Note sure we use it, though
+ *     maxDuration = 365 // number of days, can be decimal for shorter periods
+ *     maxPrims = 1000 // Note sure we use it, though
  *     renewable =
- *     expirereminder =
- *     expiregrace =
+ *     expireReminder =
+ *     expireGrace =
  *
  *   // Optional
  *     *     fontname =
- *     fontsize =
- *     lineheight =
+ *     fontSize =
+ *     lineHeight =
  *     margin =
- *     textcolor =
- *     backgroundcolor =
+ *     textColor =
+ *     backgroundColor =
  *     position =
- *     croptofit =
- *     texturewidth =
- *     textureheight =
- *     texturesides") textureSides = llParseString2List(val, ",", " =
+ *     cropToFit =
+ *     textureWidth =
+ *     textureHeight =
+ *     textureSides") textureSides = llParseString2List(val, ",", " =
  *
  */
 
@@ -219,6 +219,18 @@ list trimmedCSV2list ( string data ) {
     return llParseStringKeepNulls(data, [","], [] );
 }
 
+
+integer strToBoolean(string input)
+{
+    input = llToLower(input);
+    if (input == "true" || input == "yes" || input == "1")
+    {
+        return TRUE;
+    }
+    return FALSE;
+}
+
+
 load_data()
 {
     integer len;
@@ -241,7 +253,7 @@ load_data()
     DURATION = llList2Float(data, IDX_DURATION);
     MAX_DURATION = llList2Float(data, IDX_MAX_DURATION);
     MAX_PRIMS = llGetParcelMaxPrims(parcelPos, FALSE); // Get from parcel
-    RENEWABLE = llList2Integer(data, IDX_RENEWABLE);
+    RENEWABLE = strToBoolean(llList2String(data, IDX_RENEWABLE));
     EXPIRE_REMINDER = llList2Float(data, IDX_EXPIRE_REMINDER);
     EXPIRE_GRACE = llList2Float(data, IDX_EXPIRE_GRACE);
 
@@ -471,6 +483,15 @@ getConfig()
     }
 
     list lines = llParseString2List(osGetNotecard(configFile), "\n", "");
+    loadConfigLines(lines);
+}
+
+reloadConfig() {
+    llOwnerSay("Reloading config");
+    getConfig();
+    llOwnerSay(rentalConditions());
+}
+loadConfigLines(list lines) {
     integer count = llGetListLength(lines);
     integer i = 0;
     do
@@ -500,7 +521,7 @@ getConfig()
             else if (var == "duration") DURATION = (float)val;
             else if (var == "maxduration") MAX_DURATION = (float)val;
             else if (var == "maxprims") MAX_PRIMS = (integer)val;
-            else if (var == "renewable") RENEWABLE = (integer)val;
+            else if (var == "renewable") RENEWABLE = strToBoolean(val);
             else if (var == "expirereminder") EXPIRE_REMINDER = (float)val;
             else if (var == "expiregrace") EXPIRE_GRACE = (float)val;
         }
@@ -671,12 +692,15 @@ default
         debug("rez (from default)");
         state waiting;
     }
+
     changed(integer change)
     {
         if(change & CHANGED_LINK)
         {
             debug("CHANGED_LINK (from default)");
             state waiting;
+        } else if (change & CHANGED_INVENTORY) {
+            reloadConfig();
         }
     }
 }
@@ -824,6 +848,8 @@ state unleased
             state waiting;
         } else if (change & CHANGED_REGION_START) {
             // llResetScript();
+        } else if (change & CHANGED_INVENTORY) {
+            reloadConfig();
         } else {
             vector currentPos = llGetPos() + parcelDistance * llGetRot();
             if(currentPos != parcelPos)
@@ -1086,6 +1112,8 @@ state leased
             state waiting;
         } else if (change & CHANGED_REGION_START) {
             // llResetScript();
+        } else if (change & CHANGED_INVENTORY) {
+            reloadConfig();
         } else {
             vector currentPos = llGetPos() + parcelDistance * llGetRot();
             if(currentPos != parcelPos)
@@ -1143,10 +1171,11 @@ state waiting
     }
     changed(integer change)
     {
-        if(change & CHANGED_LINK)
-        {
+        if(change & CHANGED_LINK) {
             debug("CHANGED_LINK (from waiting)");
             state waiting;
+        } else if (change & CHANGED_INVENTORY) {
+            reloadConfig();
         }
     }
 }
