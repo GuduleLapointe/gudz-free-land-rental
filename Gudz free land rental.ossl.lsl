@@ -1,7 +1,7 @@
 /**
  * Gudule's free land rental
  *
- * @Version 1.5-dev-2
+ * @Version 1.5-dev-3
  * @author Gudule Lapointe gudule.lapointe@speculoos.world:8002
  * @licence  GNU Affero General Public License
  *
@@ -48,7 +48,7 @@
  */
 
 // User configurable variables:
-integer DEBUG = FALSE;    // set to TRUE to see debug info
+integer DEBUG = TRUE;    // set to TRUE to see debug info
 vector parcelDistance = <0,2,0>; // distance between the rental sign and the parcel (allow to place the sign outside the parcel)
 integer checkerLink = 4;
 
@@ -59,7 +59,20 @@ string texture_busy = TEXTURE_BLANK;       // busy signage
 string texture_leased = TEXTURE_BLANK;               // leased  - in use
 
 vector SIZE_UNLEASED = <1,0.2,0.5>;        // the signs size when unrented
-vector SIZE_LEASED = <1,0.2,0.125>;        // the signs size when rented (it will shrink)
+vector SIZE_LEASED = <1,0.2,0.25>;        // the signs size when rented (it will shrink)
+
+string fontName = "Sans";
+integer fontSize = 48;
+integer lineHeight = 48;
+integer margin = 24;
+string textColor = "Black";
+string backgroundColor = "White";
+string position = "center";
+integer cropToFit = FALSE;
+integer textureWidth = 512;
+integer textureHeight = 128;
+list textureSides = [ 1,3 ];
+//string otherTexture = TEXTURE_BLANK;
 
 string configFile = ".config";
 string statusFile = "~status";
@@ -116,16 +129,17 @@ float EXPIRE_REMINDER ; //Day allowed to renew earlier
 float EXPIRE_GRACE ; // Days allowed to miss payment
 
 vector TERMINAL_POS; // Last position of the terminal
-integer MY_STATE = 0;  // 0 is unleased, 1 = leased
+integer RENT_STATE = 0;  // 0 is unleased, 1 = leased
 string LEASER = "";    // name of lessor
 key LEASERID;          // their UUID
 integer LEASED_UNTIL; // unix time stamp
 integer DAYSEC = 86400;         // a constant
-integer SENT_WARNING = FALSE;    // did they get an im?
+integer WARNING_SENT = FALSE;    // did they get an im?
 integer SENT_PRIMWARNING = FALSE;    // did they get an im about going over prim count?
 integer listener;    // ID for active listener
 key touchedKey ;     // the key of whoever touched us last (not necessarily the renter)
 float touchStarted;
+string scriptState;
 
 vector parcelPos;
 vector signPos;
@@ -138,18 +152,18 @@ integer IDX_MAX_PRIMS = 2;
 integer IDX_RENEWABLE = 3;
 integer IDX_EXPIRE_REMINDER = 4;
 integer IDX_EXPIRE_GRACE = 5;
-integer IDX_MY_STATE = 6;
+integer IDX_RENT_STATE = 6;
 integer IDX_LEASER = 7;
 integer IDX_LEASERID = 8;
 integer IDX_LEASED_UNTIL = 9;
-integer IDX_SENT_WARNING = 10;
+integer IDX_WARNING_SENT = 10;
 integer IDX_TERMINAL_POS = 11;
 integer firstLaunch = TRUE;
 
 debug(string data)
 {
     if (DEBUG)
-        llOwnerSay("DEBUG: " + data);
+        llOwnerSay("/me DEBUG: " + data);
 }
 statusUpdate(string data)
 {
@@ -159,29 +173,44 @@ statusUpdate(string data)
 integer isRented()
 {
     list data = trimmedCSV2list(llGetObjectDesc()); // Parse the CSV data
-    return ( llList2Integer(data, IDX_MY_STATE) == TRUE );
+    return ( llList2Integer(data, IDX_RENT_STATE) == TRUE );
+}
+
+integer rentRemaining() {
+    integer remaining = LEASED_UNTIL - llGetUnixTime();
+    return remaining;
+}
+
+string rentRemainingHuman() {
+    return secondsToDuration(rentRemaining());
 }
 
 string rentalInfo() {
     return "Rented by  " + LEASER
     + " until " + Unix2PST_PDT(LEASED_UNTIL)
-    // + " remaining " + secondsToHumanFormat(LEASED_UNTIL - llGetUnixTime()) + ")"
+    // + " remaining " + secondsToDuration(LEASED_UNTIL - llGetUnixTime()) + ")"
     ;
 }
 
 string rentalConditions() {
     if(isRented()) return rentalInfo();
 
-    return "\nRental conditions: "
-    + "\n    Desc " + llGetObjectDesc()
-    + "\n    Duration " + daysToHumanFormat(DURATION)
+    string message = "\nRental conditions: "
+    + "\n" + llGetObjectDesc()
+    + "\n    Duration " + daysToDuration(DURATION)
     + "\n    Renewable " + ( RENEWABLE ? "yes" : "no")
-    + ( RENEWABLE && MAX_DURATION > 0 ? " (maximum " + daysToHumanFormat(MAX_DURATION) + ")" : "" )
+    + ( RENEWABLE && MAX_DURATION > 0 ? " (maximum " + daysToDuration(MAX_DURATION) + ")" : "" )
     + "\n    Max prims " + MAX_PRIMS
-    + "\n    Expiration reminder " + daysToHumanFormat(EXPIRE_REMINDER) + " before"
-    + "\n    Grace period " + daysToHumanFormat(EXPIRE_GRACE) + " after"
-    + "\nPlease read the covenant before renting"
+    + "\n    Expiration reminder " + daysToDuration(EXPIRE_REMINDER) + " before"
+    + "\n    Grace period " + daysToDuration(EXPIRE_GRACE) + " after"
     ;
+    if(isRented()) {
+        message += "\n" + rentalInfo();
+    } else {
+        message += "\nPlease read the covenant before renting" ;
+
+    }
+    return message;
 }
 
 integer dialogActiveFlag ;    // TRUE when we have up a dialog box, used by the timer to clear out the listener if no response is given
@@ -210,7 +239,7 @@ string parcelRentalInfo()
 {
     return llGetRegionName()  + " @ " + unTrailVector(parcelPos) +
     rentalInfo();
-     // " (Renter: \"" + LEASER + "\", Expire: " + secondsToHumanFormat(LEASED_UNTIL - llGetUnixTime()) + ")";
+     // " (Renter: \"" + LEASER + "\", Expire: " + secondsToDuration(LEASED_UNTIL - llGetUnixTime()) + ")";
 }
 string parcelURL()
 {
@@ -260,16 +289,15 @@ load_data()
     EXPIRE_REMINDER = llList2Float(data, IDX_EXPIRE_REMINDER);
     EXPIRE_GRACE = llList2Float(data, IDX_EXPIRE_GRACE);
 
-    string mystate_check = llList2String(data, IDX_MY_STATE);
-    MY_STATE = (integer)mystate_check;
+    string rent_state_check = llList2String(data, IDX_RENT_STATE);
+    RENT_STATE = (integer)rent_state_check;
     LEASERID = (key)llList2String(data, IDX_LEASERID);
     LEASER = llKey2Name(LEASERID);
     LEASED_UNTIL = llList2Integer(data, IDX_LEASED_UNTIL);
-    SENT_WARNING = llList2Integer(data, IDX_SENT_WARNING);
+    WARNING_SENT = llList2Integer(data, IDX_WARNING_SENT);
     TERMINAL_POS = llList2Vector(data, IDX_TERMINAL_POS);
 
-    configured = ( mystate_check != "" );
-
+    configured = ( rent_state_check != "" );
 }
 
 save_data()
@@ -283,11 +311,11 @@ save_data()
     (string)RENEWABLE,           // 3: IDX_RENEWABLE
     unTrailFloat(EXPIRE_REMINDER),            // 4: IDX_EXPIRE_REMINDER
     unTrailFloat(EXPIRE_GRACE),            // 5: IDX_EXPIRE_GRACE
-    (string)MY_STATE,               // 6: IDX_MY_STATE
+    (string)RENT_STATE,               // 6: IDX_RENT_STATE
     "",                 // 7: IDX_LEASER (deprecated, dynamic value)
     ( LEASERID == NULL_KEY ? "" : (string)LEASERID ),  // 8: IDX_LEASERID
     (string)LEASED_UNTIL,           // 9: IDX_LEASED_UNTIL
-    (string)SENT_WARNING,           // 10: IDX_SENT_WARNING
+    (string)WARNING_SENT,           // 10: IDX_WARNING_SENT
     unTrailVector(TERMINAL_POS)           // 11: IDX_TERMINAL_POS
     ];
 
@@ -297,8 +325,6 @@ save_data()
     // llOwnerSay("descConfig " + descConfig);
     initINFO = descConfig;   // for debugging in LSL Editor.
     DEBUGINFO = initINFO;  // for debugging in fast mode
-
-    getConfig() ;    // to print it in case of debug
 }
 
 reclaimParcel()
@@ -322,11 +348,11 @@ string strReplace(string str, string search, string replace) {
     return llDumpList2String(llParseStringKeepNulls((str),[search],[]),replace);
 }
 
-string secondsToHumanFormat(float insecs) {
-    return daysToHumanFormat(insecs / 86400);
+string secondsToDuration(float insecs) {
+    return daysToDuration(insecs / 86400);
 }
 
-string daysToHumanFormat(float indays)
+string daysToDuration(float indays)
 {
     integer days = (integer)indays;
     integer hours = (integer)((indays - days) * 24);
@@ -382,6 +408,37 @@ string daysToHumanFormat(float indays)
         timeString = "0 minutes";
 
     return timeString;
+}
+
+integer durationToSeconds(string duration)
+{
+    integer seconds = 0;
+    if (llStringLength(duration) > 0)
+    {
+        // Get number and unit
+        string unit = llGetSubString(duration, -1, -1);
+        float numValue = (float)llDeleteSubString(duration, -1, -1);
+        string lower = llToLower(unit);
+
+        if (llStringLength(unit) == 0) unit = "d";
+        else if (lower == "seconds" || lower == "second") unit = "s";
+        else if (lower == "minutes" || lower == "minute") unit = "m";
+        else if (lower == "hours" || lower == "hour") unit = "h";
+        else if (lower == "days" || lower == "day") unit = "d";
+        else if (lower == "weeks" || lower == "week") unit = "W";
+        else if (lower == "months" || lower == "month") unit = "M";
+        else if (lower == "years" || lower == "year") unit = "Y";
+
+        // Calculate the number of seconds based on the unit
+        if (unit == "d") seconds = (integer)(numValue * 24 * 60 * 60);
+        else if (unit == "h") seconds = (integer)(numValue * 60 * 60);
+        else if (unit == "m") seconds = (integer)(numValue * 60);
+        else if (unit == "s") seconds = (integer)numValue;
+        else if (unit == "W") seconds = (integer)(numValue * 7 * 24 * 60 * 60);
+        else if (unit == "M") seconds = (integer)(numValue * 30.4375 * 24 * 60 * 60);
+        else if (unit == "Y") seconds = (integer)(numValue * 365 * 24 * 60 * 60);
+    }
+    return seconds;
 }
 
 string Unix2PST_PDT(integer insecs)
@@ -470,21 +527,10 @@ checkValidPosition()
     }
 }
 
-string fontName = "Sans";
-integer fontSize = 36;
-integer lineHeight = 36;
-integer margin = 24;
-string textColor = "Black";
-string backgroundColor = "White";
-string position = "center";
-integer cropToFit = TRUE;
-integer textureWidth = 512;
-integer textureHeight = 64;
-list textureSides = [ 1,3 ];
-//string otherTexture = TEXTURE_BLANK;
-
 getConfig()
 {
+    debug("\n== Loading config ==");
+
     load_data();
     if (llGetInventoryType(configFile) != INVENTORY_NOTECARD)
     {
@@ -493,11 +539,17 @@ getConfig()
     }
 
     list lines = llParseString2List(osGetNotecard(configFile), "\n", "");
-    loadConfigLines(lines, TRUE); // Process lines with configURL parameter
+    getConfigLines(lines, TRUE); // Process lines with configURL parameter
 }
 
-loadConfigLines(list lines, integer processConfigURL)
+string listToDebug(list lines) {
+    return ":\n[\n " + llDumpList2String(lines, ",\n ") + "\n]";
+}
+
+getConfigLines(list lines, integer localConfig)
 {
+    debug("current state " + scriptState);
+    debug("loading config from " + (localConfig ? configFile : "url" ) + listToDebug(lines));
     integer count = llGetListLength(lines);
     integer i = 0;
     do
@@ -508,17 +560,27 @@ loadConfigLines(list lines, integer processConfigURL)
             list params = llParseString2List(line, ["="], []);
             string var = llToLower(llStringTrim(llList2String(params, 0), STRING_TRIM)); // Convert to lowercase
             string val = llStringTrim(llList2String(params, 1), STRING_TRIM);
-            debug(var + "=" + val);
 
-            if (processConfigURL && var == "configurl") {
-                llOwnerSay("reading config from URL");
+            if (localConfig && var == "configurl") {
+                llOwnerSay("abort local config, reading from URL " + val );
                 // Config URL is found, load config from the URL and stop processing local config
                 httpNotecardId = llHTTPRequest(val, [HTTP_METHOD, "GET", HTTP_MIMETYPE, "text/plain;charset=utf-8"], "");
                 return;
             }
+            // debug(var + "=" + val);
 
-            // Existing variables
-            if (var == "fontname") fontName = val;
+            // Base config
+            if (var == "duration") {
+                if(val != "") configured = TRUE;
+                DURATION = (float)val;
+            }
+            else if (var == "maxduration") MAX_DURATION = (float)val;
+            else if (var == "renewable") RENEWABLE = strToBoolean(val);
+            else if (var == "expirereminder") EXPIRE_REMINDER = (float)val;
+            else if (var == "expiregrace") EXPIRE_GRACE = (float)val;
+
+            // Layout config
+            else if (var == "fontname") fontName = val;
             else if (var == "fontsize") fontSize = (integer)val;
             else if (var == "lineheight") lineHeight = (integer)val;
             else if (var == "margin") margin = (integer)val;
@@ -530,24 +592,18 @@ loadConfigLines(list lines, integer processConfigURL)
             else if (var == "textureheight") textureHeight = (integer)val;
             else if (var == "texturesides") textureSides = llParseString2List(val, ",", "");
 
-            // New variables from getConfig function
-            else if (var == "duration") DURATION = (float)val;
-            else if (var == "maxduration") MAX_DURATION = (float)val;
-            else if (var == "maxprims") MAX_PRIMS = (integer)val;
-            else if (var == "renewable") RENEWABLE = strToBoolean(val);
-            else if (var == "expirereminder") EXPIRE_REMINDER = (float)val;
-            else if (var == "expiregrace") EXPIRE_GRACE = (float)val;
         }
         i++;
     }
     while (i < count);
+
+    debug("\n= Config loaded =");
+    switchState();
 }
 
-reloadConfig() {
-    llOwnerSay("Reloading config");
-    getConfig();
-    llOwnerSay(rentalConditions());
-}
+
+
+
 
 string cropText(string in, string fontname, integer fontsize,integer width)
 {
@@ -657,37 +713,44 @@ string unTrailVector(vector v)
     return "<" + unTrailFloat(v.x) + "," + unTrailFloat(v.y) +","+ unTrailFloat(v.z) + ">";
 }
 
+switchState() {
+    llSetScale(SIZE_LEASED);
+    setTexture(texture_expired,textureSides);
+    if(isRented() ) {
+        // llWhisper(0, rentalConditions());
+        if (scriptState != "leased" ) {
+            debug(  "switching to leased" );
+            state leased;
+        }
+    }
+    else if(configured) {
+        // llWhisper(0, rentalConditions());
+        if (scriptState != "unleased" ) {
+            debug(  "switching to unleased" );
+            state unleased;
+        }
+    } else {
+        llOwnerSay("Click this rental box to activate after configuring the DESCRIPTION.");
+        llSetText("DISABLED",<0,0,0>, 1.0);
+        if (scriptState != "default" ) {
+            debug(  "switching to default" );
+            state default;
+        }
+    }
+    debug(  "stay in " + scriptState );
+}
+
 default
 {
     state_entry()
     {
+        scriptState = "default";
+        debug("\n\n=== Entering state " + scriptState + "===");
         parcelPos = llGetPos() + parcelDistance * llGetRot();
         parcelArea = llList2Integer(llGetParcelDetails(parcelPos, [PARCEL_DETAILS_AREA]),0);
         checkValidPosition();
 
         getConfig();
-
-        llSetScale(SIZE_LEASED);
-        setTexture(texture_expired,textureSides);
-        if(isRented()) {
-            llWhisper( 0, rentalInfo() );
-            state leased;
-        }
-        else if(configured) {
-            llWhisper( 0, rentalConditions() );
-            state unleased;
-        }
-        // if(firstLaunch)
-        // {
-        //     firstLaunch = FALSE;
-        //     statusUpdate("Activating...");
-        //     if (MY_STATE == 0)
-        //     state unleased;
-        //     else if (MY_STATE == 1)
-        //     state leased;
-        // }
-        llOwnerSay("Click this rental box to activate after configuring the DESCRIPTION.");
-        llSetText("DISABLED",<0,0,0>, 1.0);
     }
 
     touch_start(integer total_number)
@@ -698,11 +761,11 @@ default
         if (touchedKey == llGetOwner())
         {
             statusUpdate("Activating...");
-            getConfig();
-            if (MY_STATE == 0)
-                state unleased;
-            else if (MY_STATE == 1)
-                state leased;
+            switchState();
+            // if (RENT_STATE == 0)
+            //     state unleased;
+            // else if (RENT_STATE == 1)
+            //     state leased;
         }
     }
 
@@ -719,28 +782,30 @@ default
             debug("CHANGED_LINK (from default)");
             state waiting;
         } else if (change & CHANGED_INVENTORY) {
-            reloadConfig();
+            getConfig();
         }
     }
 
     http_response(key id, integer status, list meta, string body) {
         if (id == httpNotecardId) {
-            llOwnerSay("got answer " + body);
+            llOwnerSay("got answer\n" + llStringTrim(body, STRING_TRIM));
             list remoteLines = llParseString2List(body, ["\n"], []);
             // Process the remote config
-            loadConfigLines(remoteLines, FALSE);
+            getConfigLines(remoteLines, FALSE);
         }
-    }}
+    }
+}
 
 state unleased
 {
     state_entry()
     {
-        debug("state unleased");
-        getConfig();
-        if (MY_STATE !=0 || DURATION == 0)
+        scriptState = "unleased";
+        debug("\n\n== Entering state " + scriptState + "==");
+
+        if (RENT_STATE !=0 || DURATION == 0)
         {
-            debug("MY_STATE:" + (string) MY_STATE);
+            debug("RENT_STATE:" + (string) RENT_STATE);
             debug("DURATION:" + (string) DURATION);
             debug("RENEWABLE:" + (string) RENEWABLE);
             llOwnerSay("Returning to default. Data is not correct.");
@@ -765,29 +830,28 @@ state unleased
         llSetTimerEvent(0);
         llListenRemove(listener);
 
-        getConfig();
-
         if (message == "Yes")
         {
             llInstantMessage(touchedKey,"Thanks for claiming this spot! Please wait a few moments...");
-            MY_STATE = 1;
+            RENT_STATE = 1;
             LEASER = llKey2Name(touchedKey);
             string shortName = llStringTrim(strReplace( llList2String(llParseStringKeepNulls(LEASER,["@"],[]), 0), ".", " "), STRING_TRIM);
             LEASERID = touchedKey;
             LEASED_UNTIL = llGetUnixTime() + (integer) (DAYSEC * DURATION);
-            debug("Remaining time:" +  secondsToHumanFormat(llGetUnixTime()-LEASED_UNTIL));
+            debug("Remaining time:" +  rentRemainingHuman());
 
-            SENT_WARNING = FALSE;
+            WARNING_SENT = FALSE;
             save_data();
-            llInstantMessage(llGetOwner(), "NEW CLAIM -" +  parcelRentalInfo());
+            llInstantMessage(llGetOwner(), parcelRentalInfo());
             list rules =[
-                PARCEL_DETAILS_NAME, shortName + "'s land",
+                PARCEL_DETAILS_NAME, shortName,
                 PARCEL_DETAILS_DESC, LEASER + "'s land; "
                     + parcelArea + " sqm; "
                     + MAX_PRIMS + " prims allowed.",
                 PARCEL_DETAILS_OWNER, LEASERID,
                 PARCEL_DETAILS_GROUP, NULL_KEY,
-                PARCEL_DETAILS_CLAIMDATE, 0];
+                PARCEL_DETAILS_CLAIMDATE, 0
+                ];
             osSetParcelDetails(parcelPos, rules);
             llSetText("",<1,0,0>, 1.0);
             llInstantMessage(LEASERID,"Your parcel is ready.\n"
@@ -818,7 +882,7 @@ state unleased
             if(touchedKey == llGetOwner()) checkValidPosition();
 
             debug("touch event in unleased");
-            getConfig();
+            // getConfig();
             llInstantMessage(touchedKey, rentalConditions() );
             // llInstantMessage(touchedKey, "Claim Info");
             //
@@ -876,7 +940,7 @@ state unleased
         } else if (change & CHANGED_REGION_START) {
             // llResetScript();
         } else if (change & CHANGED_INVENTORY) {
-            reloadConfig();
+            getConfig();
         } else {
             vector currentPos = llGetPos() + parcelDistance * llGetRot();
             if(currentPos != parcelPos)
@@ -892,18 +956,18 @@ state leased
 {
     state_entry()
     {
+        scriptState = "leased";
+        debug("\n\n== Entering state " + scriptState + "==");
         setTexture(texture_busy,textureSides);
-        debug("Leased mode");
         debug((string)llGetUnixTime());
 
-        getConfig();
-        if (MY_STATE != 1 || DURATION == 0 || LEASER == "")
+        if (RENT_STATE != 1 || DURATION == 0 || LEASER == "")
         {
-            debug("MY_STATE:" + (string) MY_STATE);
+            debug("RENT_STATE:" + (string) RENT_STATE);
             debug("DURATION:" + (string) DURATION);
             debug("LEASER:" + (string) LEASER);
 
-            MY_STATE = 0;
+            RENT_STATE = 0;
             save_data();
             llOwnerSay("Returning to unleased. Data was not correct.");
             state unleased;
@@ -912,7 +976,7 @@ state leased
         string parcelName = (string)llGetParcelDetails(parcelPos, [PARCEL_DETAILS_NAME]);
         drawText(parcelName);
 
-        debug("Remaining time:" +  secondsToHumanFormat(llGetUnixTime()-LEASED_UNTIL));
+        debug("Remaining time:" +  rentRemainingHuman());
 
         llSetTimerEvent(1); //check now
         statusUpdate("Ready");
@@ -924,14 +988,14 @@ state leased
         dialogActiveFlag = FALSE;
         if (message == "Yes")
         {
-            getConfig();
-            if (MY_STATE != 1 || DURATION == 0 || LEASER == "")
+            // getConfig();
+            if (RENT_STATE != 1 || DURATION == 0 || LEASER == "")
             {
-                debug("MY_STATE:" + (string) MY_STATE);
+                debug("RENT_STATE:" + (string) RENT_STATE);
                 debug("DURATION:" + (string) DURATION);
                 debug("LEASER:" + (string) LEASER);
 
-                MY_STATE = 0;
+                RENT_STATE = 0;
                 save_data();
                 statusUpdate("Returning to unleased. Data is not correct.");
                 state unleased;
@@ -940,7 +1004,7 @@ state leased
             {
                 integer timeleft = LEASED_UNTIL - llGetUnixTime();
 
-                debug("Remaining time:" +  secondsToHumanFormat(llGetUnixTime()-LEASED_UNTIL));
+                debug("Remaining time:" +  rentRemainingHuman());
                 debug("DAYSEC:" + (string) DAYSEC);
                 debug("timeleft:" + (string) timeleft);
                 debug("MAX_DURATION:" + (string) MAX_DURATION);
@@ -952,7 +1016,7 @@ state leased
                 else
                 {
                     debug("Leased");
-                    SENT_WARNING = FALSE;
+                    WARNING_SENT = FALSE;
                     LEASED_UNTIL += (integer) DURATION;
                     // debug("Leased until " + (string)LEASED_UNTIL );
                     save_data();
@@ -970,7 +1034,7 @@ state leased
             key FORMERLEASERID=LEASERID;
             reclaimParcel();
             llInstantMessage(FORMERLEASERID, "You abandonned your land, it has been reset to the estate owner. Please cleanup the parcel. Objects owned by you on the parcel will be returned soon.");
-            MY_STATE = 0;
+            RENT_STATE = 0;
             save_data();
             state unleased;
         }
@@ -993,15 +1057,15 @@ state leased
 
         debug("timer event in leased");
 
-        getConfig();
+        // getConfig();
 
-        if (MY_STATE != 1 || DURATION == 0 || LEASER == "")
+        if (RENT_STATE != 1 || DURATION == 0 || LEASER == "")
         {
-            debug("MY_STATE:" + (string) MY_STATE);
+            debug("RENT_STATE:" + (string) RENT_STATE);
             debug("DURATION:" + (string) DURATION);
             debug("LEASER:" + (string) LEASER);
 
-            MY_STATE = 0;
+            RENT_STATE = 0;
             save_data();
             statusUpdate("Returning to unleased. Data is not correct.");
             state unleased;
@@ -1022,31 +1086,25 @@ state leased
             SENT_PRIMWARNING = FALSE;
         }
 
-
-
-        debug("Remaining time:" +  secondsToHumanFormat(llGetUnixTime()-LEASED_UNTIL));
+        integer remaining = rentRemaining();
+        debug("Remaining time:" +  rentRemainingHuman());
 
         if (RENEWABLE)
         {
-
-            debug( (string) LEASED_UNTIL + " > " + (string) llGetUnixTime());
-
-            debug( "EXPIRE_REMINDER * DAYSEC " + (string) (EXPIRE_REMINDER * DAYSEC));
-
-            if (LEASED_UNTIL > llGetUnixTime() && LEASED_UNTIL - llGetUnixTime() < EXPIRE_REMINDER * DAYSEC)
-            {
-                debug("Claim must be renewed");
+            debug("Is renewable");
+            if ( remaining > 0 && remaining < EXPIRE_REMINDER * DAYSEC ) {
+                debug("remaining " + remaining +" < "+ (EXPIRE_REMINDER * DAYSEC) );
+                debug("Rental must be renewed");
                 setTexture(texture_expired,textureSides);
-                llSetText("Claim must be renewed!",<1,0,0>, 1.0);
+                llSetText("Rental must be renewed!",<1,0,0>, 1.0);
             }
-            else if (LEASED_UNTIL < llGetUnixTime()  && llGetUnixTime() - LEASED_UNTIL < EXPIRE_GRACE * DAYSEC)
-            {
-                if (!SENT_WARNING)
+            else if ( remaining < 0  && llAbs(remaining) < EXPIRE_GRACE * DAYSEC ) {
+                if (!WARNING_SENT)
                 {
                     debug("sending warn");
                     llInstantMessage(LEASERID, "Your claim needs to be renewed, please go to your parcel " + parcelURL() + " and touch the sign to claim it again! - " + parcelRentalInfo());
                     llInstantMessage(llGetOwner(), "CLAIM DUE - " + parcelRentalInfo());
-                    SENT_WARNING = TRUE;
+                    WARNING_SENT = TRUE;
                     save_data();
                 }
                 setTexture(texture_expired,textureSides);
@@ -1062,17 +1120,17 @@ state leased
                 llInstantMessage(LEASERID, "Your claim has expired. Please cleanup the parcel. Objects owned by you on the parcel will be returned soon.");
                 llInstantMessage(llGetOwner(), "CLAIM EXPIRED: CLEANUP! -  " + parcelRentalInfo());
                 reclaimParcel();
-                MY_STATE = 0;
+                RENT_STATE = 0;
                 save_data();
                 state unleased;
             }
         }
-        else if (LEASED_UNTIL < llGetUnixTime())
+        else if ( remaining < 0 )
         {
             llInstantMessage(llGetOwner(), "CLAIM EXPIRED: CLEANUP! -  " + parcelRentalInfo());
             debug("TIME EXPIRED. RETURNING TO DEFAULT");
             reclaimParcel();
-            MY_STATE = 0;
+            RENT_STATE = 0;
             save_data();
             state unleased;
             //state default;
@@ -1087,23 +1145,22 @@ state leased
 
         if(touchedKey == llGetOwner()) checkValidPosition();
 
-        getConfig();
+        // getConfig();
 
-        if (MY_STATE != 1 || DURATION == 0 || LEASER == "" )
+        if (RENT_STATE != 1 || DURATION == 0 || LEASER == "" )
         {
-            debug("MY_STATE:" + (string) MY_STATE);
+            debug("RENT_STATE:" + (string) RENT_STATE);
             debug("DURATION:" + (string) DURATION);
             debug("LEASER:" + (string) LEASER);
 
-            MY_STATE = 0;
+            RENT_STATE = 0;
             save_data();
             statusUpdate("Returning to unleased. Data is not correct.");
             state unleased;
         }
 
-
         if(LEASED_UNTIL < llGetUnixTime())
-        statusUpdate("Claim due since " + secondsToHumanFormat(llGetUnixTime()-LEASED_UNTIL));
+        statusUpdate("Claim due since " + rentRemainingHuman());
         else
         llWhisper(0, rentalInfo());
 
@@ -1140,7 +1197,7 @@ state leased
         } else if (change & CHANGED_REGION_START) {
             // llResetScript();
         } else if (change & CHANGED_INVENTORY) {
-            reloadConfig();
+            getConfig();
         } else {
             vector currentPos = llGetPos() + parcelDistance * llGetRot();
             if(currentPos != parcelPos)
@@ -1156,7 +1213,8 @@ state waiting
 {
     state_entry()
     {
-        debug("entering wait state");
+        scriptState = "waiting";
+        debug("\n\n== Entering state " + scriptState + "==");
         integer positionConfirmed = TRUE;
         positionConfirmed = FALSE;
         llSetLinkPrimitiveParamsFast(checkerLink, [
@@ -1174,6 +1232,7 @@ state waiting
         channel);
         //
     }
+
     listen(integer channel, string name, key id, string message)
     {
         if(id == llGetOwner() && message == "Checked")
@@ -1202,7 +1261,7 @@ state waiting
             debug("CHANGED_LINK (from waiting)");
             state waiting;
         } else if (change & CHANGED_INVENTORY) {
-            reloadConfig();
+            getConfig();
         }
     }
 }
