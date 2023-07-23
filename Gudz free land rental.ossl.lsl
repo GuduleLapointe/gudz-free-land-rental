@@ -37,7 +37,7 @@
  *     lineHeight =
  *     margin =
  *     textColor =
- *     backgroundColor =
+ *     textBackgroundColor =
  *     position =
  *     cropToFit =
  *     textureWidth =
@@ -65,7 +65,8 @@ integer fontSize = 48;
 integer lineHeight = 48;
 integer margin = 24;
 string textColor = "Black";
-string backgroundColor = "White";
+string textBackgroundColor = "White";
+vector primColorAvailable = <1,0.5,0>;
 string position = "center";
 integer cropToFit = FALSE;
 integer textureWidth = 512;
@@ -319,21 +320,25 @@ dialog()
     }
     llSetTimerEvent(30);
     llSetText("",<1,0,0>, 1.0);
-    //llInstantMessage(LEASERID,"Your parcel is ready.\n" + parcelURL());
+    //llInstantMessage(LEASERID,"Your parcel is ready.\n" + parcelHopURL());
 
     dialogActiveFlag  = TRUE;
 }
 
+string regionNamePos() {
+    return llGetRegionName() + "/" + unTrailFloat(parcelPos.x) + "/" + unTrailFloat(parcelPos.y) + "/" + unTrailFloat(parcelPos.z) + "/";
+}
+
 string parcelRentalInfo()
 {
-    return llGetRegionName()  + " @ " + unTrailVector(parcelPos) +
+    return regionNamePos() + " " +
     rentalInfo();
      // " (Renter: \"" + LEASER + "\", Expire: " + secondsToDuration(LEASED_UNTIL - llGetUnixTime()) + ")";
 }
-string parcelURL()
+
+string parcelHopURL()
 {
-    return "secondlife://" + strReplace(osGetGridGatekeeperURI(), "http://", "") + "/" + llGetRegionName() + "/"
-    + unTrailFloat(parcelPos.x) + "," + unTrailFloat(parcelPos.y) + "," + unTrailFloat(parcelPos.z);
+    return "hop://" + strReplace(osGetGridGatekeeperURI(), "http://", "") + "/" + strReplace(regionNamePos(), " ", "+");
 }
 
 list trimmedCSV2list ( string data ) {
@@ -665,7 +670,8 @@ getConfigLines(list lines, integer localConfig)
             else if (var == "lineheight") lineHeight = (integer)val;
             else if (var == "margin") margin = (integer)val;
             else if (var == "textcolor") textColor = val;
-            else if (var == "backgroundcolor") backgroundColor = val;
+            else if (var == "textbackgroundcolor") textBackgroundColor = val;
+            else if (var == "primcoloravailable") primColorAvailable = (vector)val;
             else if (var == "position") position = val;
             else if (var == "croptofit") cropToFit = (integer)val;
             else if (var == "texturewidth") textureWidth = (integer)val;
@@ -742,7 +748,7 @@ drawText(string text)
     commandList = osDrawText(commandList, text);
 
     integer alpha = 256;
-    if(backgroundColor == "transparent")
+    if(textBackgroundColor == "transparent")
     {
         alpha = 0;
         //otherTexture = TEXTURE_TRANSPARENT;
@@ -751,20 +757,36 @@ drawText(string text)
     do
     {
         integer face=llList2Integer(textureSides, i);
-        osSetDynamicTextureDataBlendFace("", "vector", commandList, "width:"+(string)textureWidth+",height:"+(string)textureHeight+",bgcolor:" + backgroundColor + ",alpha:"+alpha, FALSE, 2, 0, 255, face);
+        osSetDynamicTextureDataBlendFace("", "vector", commandList, "width:"+(string)textureWidth+",height:"+(string)textureHeight+",bgcolor:" + textBackgroundColor + ",alpha:"+alpha, FALSE, 2, 0, 255, face);
         i++;
     }
     while (i < llGetListLength(textureSides));
 }
 
+blankTextureAndColor() {
+    llSetTexture(TEXTURE_BLANK,ALL_SIDES);
+    llSetColor(<1,1,1>, ALL_SIDES);
+}
+
 setTexture(string texture, list faces)
 {
+    blankTextureAndColor();
+    if(texture == TEXTURE_BLANK) return;
+
+    if( ! isRented() ) {
+        llSetColor(primColorAvailable, ALL_SIDES);
+    }
+
     integer i = 0;
     do
     {
         integer face=llList2Integer(faces, i);
         llSetTexture(texture,face);
         i++;
+        llSetLinkPrimitiveParamsFast(LINK_THIS, [
+        PRIM_COLOR, face, <1,1,1>, 1.0
+        ]);
+
     }
     while (i < llGetListLength(faces));
 }
@@ -797,7 +819,6 @@ switchState() {
     llSetScale(SIZE_LEASED);
     setTexture(texture_expired,textureSides);
     if(isRented() ) {
-        llOwnerSay(" set object name to " + LEASER + "'s Nameplate GFLR " + version );
         llSetObjectName(LEASER + "'s Nameplate GFLR " + version);
 
         // llWhisper(0, rentalConditions());
@@ -805,7 +826,6 @@ switchState() {
             state leased;
         }
     } else {
-        llOwnerSay(" set object name to " + llGetScriptName());
         llSetObjectName( llGetScriptName() );
         if(configured) {
             // llWhisper(0, rentalConditions());
@@ -877,6 +897,7 @@ default
     }
 }
 
+
 state unleased
 {
     state_entry()
@@ -893,10 +914,8 @@ state unleased
 
         llSetScale(SIZE_UNLEASED);
 
-        //Blank texture
-        setTexture(TEXTURE_BLANK,textureSides);
-
         setTexture(texture_unleased,textureSides);
+
         //llOwnerSay("Lease script is unleased");
         llSetText("",<1,0,0>, 1.0);
         reclaimParcel();
@@ -933,7 +952,7 @@ state unleased
             osSetParcelDetails(parcelPos, rules);
             llSetText("",<1,0,0>, 1.0);
             llInstantMessage(LEASERID,"Your parcel is ready.\n"
-            + parcelURL() + "\n" + "Please join the group to receive status updates.");
+            + parcelHopURL() + "\n" + "Please join the group to receive status updates.");
             osInviteToGroup(LEASERID);
             switchState(); // state leased;
         }
@@ -1156,7 +1175,7 @@ state leased
             else if ( remaining < 0  && llAbs(remaining) < EXPIRE_GRACE * DAYSEC ) {
                 if (!WARNING_SENT)
                 {
-                    llInstantMessage(LEASERID, "Your claim needs to be renewed, please go to your parcel " + parcelURL() + " and touch the sign to claim it again! - " + parcelRentalInfo());
+                    llInstantMessage(LEASERID, "Your claim needs to be renewed, please go to your parcel " + parcelHopURL() + " and touch the sign to claim it again! - " + parcelRentalInfo());
                     llInstantMessage(llGetOwner(), "CLAIM DUE - " + parcelRentalInfo());
                     WARNING_SENT = TRUE;
                     save_data();
