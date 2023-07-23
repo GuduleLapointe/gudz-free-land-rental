@@ -1,7 +1,6 @@
 /**
  * Gudz Free Land Rental
  *
-* @version 1.5-beta-4
  * @author Gudule Lapointe gudule.lapointe@speculoos.world:8002
  * @licence  GNU Affero General Public License
  *
@@ -159,6 +158,66 @@ integer IDX_LEASED_UNTIL = 9;
 integer IDX_WARNING_SENT = 10;
 integer IDX_TERMINAL_POS = 11;
 integer firstLaunch = TRUE;
+
+string scrupURL = "https://speculoos.world/scrup/scrup.php"; // Change to your scrup.php URL
+integer scrupAllowUpdates = TRUE; // should always be true, except for debug
+
+string loginURI; // will be set by scrup() function
+string scrupRequestID; // will be set dynamically
+integer scrupSayVersion = TRUE; // to owner, after start or update
+integer scrupPin;// will be set dynamically
+string version; // do not set here, it will be fetched from the script name
+
+scrup(integer enable) {
+    // Uncomment the loginURI for your platform, comment or delete other line
+    loginURI = osGetGridLoginURI();  // If in OpenSimulator
+    // loginURI = "secondlife://";      // If in Second Life
+
+    if(loginURI == "" || scrupURL == "" |! scrupAllowUpdates |! enable)  {
+        if(loginURI=="") llOwnerSay("loginURI not configured");
+        else if(scrupURL=="") llOwnerSay("scrupURL not configured");
+        else if(!scrupAllowUpdates) debug("scrupAllowUpdates is set to false");
+        else debug("scup suspend");
+        llSetRemoteScriptAccessPin(0);
+        return;
+    }
+
+    string scrupLibrary = "1.1.1";
+    version = ""; list parts=llParseString2List(llGetScriptName(), [" "], []);
+    integer i = 1; do {
+        string part = llList2String(parts, i);
+        string main = llList2String(llParseString2List(part, ["-"], []), 0);
+        if(llGetListLength(llParseString2List(main, ["."], [])) > 1
+        && (integer)llDumpList2String(llParseString2List(main, ["."], []), "")) {
+            version = part;
+            jump break;
+        }
+    } while (i++ < llGetListLength(parts)-1 );
+    if(version == "") { scrup(FALSE); return; }
+    @break;
+    list scriptInfo = [ llDumpList2String(llList2List(parts, 0, i - 1), " "), version ];
+    string scriptname = llList2String(scriptInfo, 0);
+    version = llList2String(scriptInfo, 1);
+    if(scrupSayVersion) llOwnerSay(scriptname + " version " + version);
+    scrupSayVersion = FALSE;
+
+    if(llGetStartParameter() != 0) { i=0; do {
+        string found = llGetInventoryName(INVENTORY_SCRIPT, i);
+        if(found != llGetScriptName() && llSubStringIndex(found, scriptname + " ") == 0) {
+            llOwnerSay("deleting duplicate '" + found + "'");
+            llRemoveInventory(found);
+        }
+    } while (i++ < llGetInventoryNumber(INVENTORY_SCRIPT)-1); }
+
+    scrupPin = (integer)(llFrand(999999999) + 56748);
+    list params = [ "loginURI=" + loginURI, "action=register",
+    "type=client", "linkkey=" + (string)llGetKey(), "scriptname=" + scriptname,
+    "pin=" + (string)scrupPin, "version=" + version, "scrupLibrary=" + scrupLibrary ];
+    scrupRequestID = llHTTPRequest(scrupURL, [HTTP_METHOD, "POST",
+    HTTP_MIMETYPE, "application/x-www-form-urlencoded"],
+    llDumpList2String(params, "&"));
+    llSetRemoteScriptAccessPin(scrupPin);
+}
 
 debug(string data)
 {
@@ -738,22 +797,28 @@ switchState() {
     llSetScale(SIZE_LEASED);
     setTexture(texture_expired,textureSides);
     if(isRented() ) {
+        llOwnerSay(" set object name to " + LEASER + "'s Nameplate GFLR " + version );
+        llSetObjectName(LEASER + "'s Nameplate GFLR " + version);
+
         // llWhisper(0, rentalConditions());
         if (scriptState != "leased" ) {
             state leased;
         }
-    }
-    else if(configured) {
-        // llWhisper(0, rentalConditions());
-        if (scriptState != "unleased" ) {
-            state unleased;
-        }
     } else {
-        llOwnerSay("Click this rental box to activate after configuring the DESCRIPTION.");
-        llSetText("DISABLED",<0,0,0>, 1.0);
-        if (scriptState != "default" ) {
-            state default;
-        }
+        llOwnerSay(" set object name to " + llGetScriptName());
+        llSetObjectName( llGetScriptName() );
+        if(configured) {
+            // llWhisper(0, rentalConditions());
+            if (scriptState != "unleased" ) {
+                state unleased;
+            }
+            } else {
+                llOwnerSay("Click this rental box to activate after configuring the DESCRIPTION.");
+                llSetText("DISABLED",<0,0,0>, 1.0);
+                if (scriptState != "default" ) {
+                    state default;
+                }
+            }
     }
 }
 
@@ -761,6 +826,7 @@ default
 {
     state_entry()
     {
+        scrup(ACTIVE);
         scriptState = "default";
         debug("\n\n\n\n=== INITIALIZING ===");
 
@@ -815,6 +881,7 @@ state unleased
 {
     state_entry()
     {
+        scrup(ACTIVE);
         scriptState = "unleased";
         debug("\n\n== Entering state " + scriptState + "==");
 
@@ -868,7 +935,7 @@ state unleased
             llInstantMessage(LEASERID,"Your parcel is ready.\n"
             + parcelURL() + "\n" + "Please join the group to receive status updates.");
             osInviteToGroup(LEASERID);
-            state leased;
+            switchState(); // state leased;
         }
     }
 
@@ -963,6 +1030,7 @@ state leased
 {
     state_entry()
     {
+        scrup(ACTIVE);
         scriptState = "leased";
         debug("\n\n== Entering state " + scriptState + "==");
         setTexture(texture_busy,textureSides);
@@ -973,7 +1041,8 @@ state leased
             RENT_STATE = 0;
             save_data();
             llOwnerSay("Returning to unleased. Data was not correct.");
-            state unleased;
+            // state unleased;
+            switchState();
         }
         llSetScale(SIZE_LEASED);
         string parcelName = (string)llGetParcelDetails(parcelPos, [PARCEL_DETAILS_NAME]);
@@ -996,7 +1065,8 @@ state leased
                 RENT_STATE = 0;
                 save_data();
                 statusUpdate("Returning to unleased. Data is not correct.");
-                state unleased;
+                // state unleased;
+                switchState();
             }
             else if (RENEWABLE)
             {
@@ -1028,7 +1098,8 @@ state leased
             llInstantMessage(FORMERLEASERID, "You abandonned your land, it has been reset to the estate owner. Please cleanup the parcel. Objects owned by you on the parcel will be returned soon.");
             RENT_STATE = 0;
             save_data();
-            state unleased;
+            // state unleased;
+            switchState();
         }
     }
 
@@ -1188,6 +1259,7 @@ state waiting
 {
     state_entry()
     {
+        scrup(FALSE);
         scriptState = "waiting";
         debug("\n\n== Entering state " + scriptState + "==");
         integer positionConfirmed = TRUE;
