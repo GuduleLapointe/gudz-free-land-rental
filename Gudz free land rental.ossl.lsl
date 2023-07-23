@@ -157,9 +157,30 @@ statusUpdate(string data)
 
 integer isRented()
 {
-    string description = llGetObjectDesc(); // Get the object's description
-    list my_data = llParseString2List(description, [","], []); // Parse the CSV data
-    return ( llList2Integer(my_data, IDX_MY_STATE) == TRUE );
+    list data = trimmedCSV2list(llGetObjectDesc()); // Parse the CSV data
+    return ( llList2Integer(data, IDX_MY_STATE) == TRUE );
+}
+
+string rentalInfo() {
+    return "Rented by  " + LEASER
+    + " until " + Unix2PST_PDT(LEASED_UNTIL)
+    // + " remaining " + secondsToHumanFormat(LEASED_UNTIL - llGetUnixTime()) + ")"
+    ;
+}
+
+string rentalConditions() {
+    if(isRented()) return rentalInfo();
+
+    return "\nRental conditions: "
+    + "\n    Desc " + llGetObjectDesc()
+    + "\n    Duration " + daysToHumanFormat(DURATION)
+    + "\n    Renewable " + ( RENEWABLE ? "yes" : "no")
+    + ( RENEWABLE && MAX_DURATION > 0 ? " (maximum " + daysToHumanFormat(MAX_DURATION) + ")" : "" )
+    + "\n    Max prims " + MAX_PRIMS
+    + "\n    Expiration reminder " + daysToHumanFormat(EXPIRE_REMINDER) + " before"
+    + "\n    Grace period " + daysToHumanFormat(EXPIRE_GRACE) + " after"
+    + "\nPlease read the covenant before renting"
+    ;
 }
 
 integer dialogActiveFlag ;    // TRUE when we have up a dialog box, used by the timer to clear out the listener if no response is given
@@ -186,7 +207,7 @@ dialog()
 
 string get_rentalbox_info()
 {
-    return llGetRegionName()  + " @ " + (string)parcelPos + " (Renter: \"" + LEASER + "\", Expire: " + timespan(LEASED_UNTIL - llGetUnixTime()) + ")";
+    return llGetRegionName()  + " @ " + (string)parcelPos + " (Renter: \"" + LEASER + "\", Expire: " + secondsToHumanFormat(LEASED_UNTIL - llGetUnixTime()) + ")";
 }
 string get_rentalbox_url()
 {
@@ -194,61 +215,53 @@ string get_rentalbox_url()
     // + (string)parcelPos.x + "," + (string)parcelPos.y + "," + (string)parcelPos.z;
 }
 
-string timespan(integer time)
-{
-    integer days = time / DAYSEC;
-    integer curtime = (time / DAYSEC) - (time % DAYSEC);
-    integer hours = curtime / 3600;
-    integer minutes = (curtime % 3600) / 60;
-    integer seconds = curtime % 60;
-
-    return (string)llAbs(days) + " days, " + (string)llAbs(hours) + " hours, "
-        + (string)llAbs(minutes) + " minutes, " + (string)llAbs(seconds) + " seconds";
-
+list trimmedCSV2list ( string data ) {
+    return llParseStringKeepNulls(data, [","], [] );
 }
 
 load_data()
 {
     integer len;
     string desc = llGetObjectDesc();
-    list my_data = llCSV2List(desc);
+    list data = trimmedCSV2list(desc);
 
     if (llStringLength(desc) < 5) // SL does not allow blank description
     {
-        my_data = llCSV2List(initINFO);
+        data = trimmedCSV2list(initINFO);
     }
     else if (DEBUG)
     {
-        my_data = llCSV2List(DEBUGINFO);    // 5 minute fast timers
+        data = trimmedCSV2list(DEBUGINFO);    // 5 minute fast timers
     }
 
     // Should be 6 for unconfigured and 11 for configured and in action
-    len = llGetListLength(my_data);
+    len = llGetListLength(data);
 
     // Extract data
-    DURATION = llList2Float(my_data, IDX_DURATION);
-    MAX_DURATION = llList2Float(my_data, IDX_MAX_DURATION);
+    DURATION = llList2Float(data, IDX_DURATION);
+    MAX_DURATION = llList2Float(data, IDX_MAX_DURATION);
     MAX_PRIMS = llGetParcelMaxPrims(parcelPos, FALSE); // Get from parcel
-    RENEWABLE = llList2Integer(my_data, IDX_RENEWABLE);
-    EXPIRE_REMINDER = llList2Float(my_data, IDX_EXPIRE_REMINDER);
-    EXPIRE_GRACE = llList2Float(my_data, IDX_EXPIRE_GRACE);
+    RENEWABLE = llList2Integer(data, IDX_RENEWABLE);
+    EXPIRE_REMINDER = llList2Float(data, IDX_EXPIRE_REMINDER);
+    EXPIRE_GRACE = llList2Float(data, IDX_EXPIRE_GRACE);
 
-    string mystate_check = llList2String(my_data, IDX_MY_STATE);
+    string mystate_check = llList2String(data, IDX_MY_STATE);
     MY_STATE = (integer)mystate_check;
-    LEASER = llList2String(my_data, IDX_LEASER);
-    LEASERID = (key)llList2String(my_data, IDX_LEASERID);
-    LEASED_UNTIL = llList2Integer(my_data, IDX_LEASED_UNTIL);
-    SENT_WARNING = llList2Integer(my_data, IDX_SENT_WARNING);
-    TERMINAL_POS = llList2Vector(my_data, IDX_TERMINAL_POS);
+    LEASERID = (key)llList2String(data, IDX_LEASERID);
+    LEASER = llKey2Name(LEASERID);
+    LEASED_UNTIL = llList2Integer(data, IDX_LEASED_UNTIL);
+    SENT_WARNING = llList2Integer(data, IDX_SENT_WARNING);
+    TERMINAL_POS = llList2Vector(data, IDX_TERMINAL_POS);
 
     configured = ( mystate_check != "" );
+
 }
 
 save_data()
 {
     debug("Data saved in description");
     // Prepare data, don
-    list my_data =  [
+    list data =  [
     unTrailFloat(DURATION),                 // 0: IDX_DURATION
     unTrailFloat(MAX_DURATION),              // 1: IDX_MAX_DURATION
     "",                // 2: IDX_MAX_PRIMS (deprecated, dynamic value)
@@ -262,9 +275,11 @@ save_data()
     (string)SENT_WARNING,           // 10: IDX_SENT_WARNING
     unTrailVector(TERMINAL_POS)           // 11: IDX_TERMINAL_POS
     ];
-    string descConfig = llDumpList2String(my_data);
+
+    string descConfig = llDumpList2String(data, ",");
     llSetObjectDesc(descConfig);
-    llOwnerSay("descConfig " + descConfig);
+
+    // llOwnerSay("descConfig " + descConfig);
     initINFO = descConfig;   // for debugging in LSL Editor.
     DEBUGINFO = initINFO;  // for debugging in fast mode
 
@@ -292,32 +307,11 @@ string strReplace(string str, string search, string replace) {
     return llDumpList2String(llParseStringKeepNulls((str),[search],[]),replace);
 }
 
-// timestampToDate Unix Time to SLT, identifying whether it is currently PST or PDT (i.e. Daylight Saving aware)
-// Omei Qunhua December 2013
-
-list weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
-string Unix2PST_PDT(integer insecs)
-{
-    string str = timestampToDate(insecs - (3600 * 8) );   // PST is 8 hours behind GMT
-    if (llGetSubString(str, -3, -1) == "PDT")     // if the result indicates Daylight Saving Time ...
-        str = timestampToDate(insecs - (3600 * 7) );      // ... Recompute at 1 hour later
-    return str;
+string secondsToHumanFormat(float insecs) {
+    return daysToHumanFormat(insecs / 86400);
 }
 
-// This leap year test is correct for all years from 1901 to 2099 and hence is quite adequate for Unix Time computations
-integer LeapYear(integer year)
-{
-    return !(year & 3);
-}
-
-integer DaysPerMonth(integer year, integer month)
-{
-    if (month == 2)      return 28 + LeapYear(year);
-    return 30 + ( (month + (month > 7) ) & 1);           // Odd months up to July, and even months after July, have 31 days
-}
-
-string daysToTimeString(float indays)
+string daysToHumanFormat(float indays)
 {
     integer days = (integer)indays;
     integer hours = (integer)((indays - days) * 24);
@@ -368,7 +362,31 @@ string daysToTimeString(float indays)
     return timeString;
 }
 
-string timestampToDate(integer insecs)
+string Unix2PST_PDT(integer insecs)
+{
+    string str = Unix2PST_PDT_pre_process(insecs - (3600 * 8) );   // PST is 8 hours behind GMT
+    if (llGetSubString(str, -3, -1) == "PDT")     // if the result indicates Daylight Saving Time ...
+        str = Unix2PST_PDT_pre_process(insecs - (3600 * 7) );      // ... Recompute at 1 hour later
+    return str;
+}
+
+// Unix2PST_PDT_pre_process Unix Time to SLT, identifying whether it is currently PST or PDT (i.e. Daylight Saving aware)
+// Omei Qunhua December 2013
+list weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+// This leap year test is correct for all years from 1901 to 2099 and hence is quite adequate for Unix Time computations
+integer LeapYear(integer year)
+{
+    return !(year & 3);
+}
+
+integer DaysPerMonth(integer year, integer month)
+{
+    if (month == 2)      return 28 + LeapYear(year);
+    return 30 + ( (month + (month > 7) ) & 1);           // Odd months up to July, and even months after July, have 31 days
+}
+
+string Unix2PST_PDT_pre_process(integer insecs)
 {
     integer w; integer month; integer daysinyear;
     integer mins = insecs / 60;
@@ -579,18 +597,6 @@ setTexture(string texture, integer face)
         llSetTexture(texture,face);
 }
 
-string rentalConditions() {
-    return "\nRental conditions: "
-    + "\n    Duration " + daysToTimeString(DURATION)
-    + "\n    Renewable " + ( RENEWABLE ? "yes" : "no")
-    + ( RENEWABLE && MAX_DURATION > 0 ? " (maximum " + daysToTimeString(MAX_DURATION) + ")" : "" )
-    + "\n    Max prims " + MAX_PRIMS
-    + "\n    Expiration reminder " + daysToTimeString(EXPIRE_REMINDER) + " before"
-    + "\n    Grace period " + daysToTimeString(EXPIRE_GRACE) + " after"
-    + "\nPlease read the covenant before renting"
-    ;
-}
-
 string unTrailFloat(float value)
 {
     string str = (string)value;
@@ -620,14 +626,15 @@ default
         checkValidPosition();
 
         getConfig();
-        llWhisper( 0, rentalConditions() );
 
         llSetScale(SIZE_LEASED);
         setTexture(texture_expired,textureSides);
         if(isRented()) {
+            llWhisper( 0, rentalInfo() );
             state leased;
         }
         else if(configured) {
+            llWhisper( 0, rentalConditions() );
             state unleased;
         }
         // if(firstLaunch)
@@ -717,7 +724,7 @@ state unleased
             string shortName = llStringTrim(strReplace( llList2String(llParseStringKeepNulls(LEASER,["@"],[]), 0), ".", " "), STRING_TRIM);
             LEASERID = touchedKey;
             LEASED_UNTIL = llGetUnixTime() + (integer) (DAYSEC * DURATION);
-            debug("Remaining time:" +  timespan(llGetUnixTime()-LEASED_UNTIL));
+            debug("Remaining time:" +  secondsToHumanFormat(llGetUnixTime()-LEASED_UNTIL));
 
             SENT_WARNING = FALSE;
             save_data();
@@ -852,7 +859,7 @@ state leased
         string parcelName = (string)llGetParcelDetails(parcelPos, [PARCEL_DETAILS_NAME]);
         drawText(parcelName);
 
-        debug("Remaining time:" +  timespan(llGetUnixTime()-LEASED_UNTIL));
+        debug("Remaining time:" +  secondsToHumanFormat(llGetUnixTime()-LEASED_UNTIL));
 
         llSetTimerEvent(1); //check now
         statusUpdate("Ready");
@@ -880,7 +887,7 @@ state leased
             {
                 integer timeleft = LEASED_UNTIL - llGetUnixTime();
 
-                debug("Remaining time:" +  timespan(llGetUnixTime()-LEASED_UNTIL));
+                debug("Remaining time:" +  secondsToHumanFormat(llGetUnixTime()-LEASED_UNTIL));
                 debug("DAYSEC:" + (string) DAYSEC);
                 debug("timeleft:" + (string) timeleft);
                 debug("MAX_DURATION:" + (string) MAX_DURATION);
@@ -894,7 +901,7 @@ state leased
                     debug("Leased");
                     SENT_WARNING = FALSE;
                     LEASED_UNTIL += (integer) DURATION;
-                    debug("Leased until " + (string)LEASED_UNTIL );
+                    // debug("Leased until " + (string)LEASED_UNTIL );
                     save_data();
                     llSetScale(SIZE_LEASED);
                     //setTexture(texture_leased,textureSides);
@@ -964,7 +971,7 @@ state leased
 
 
 
-        debug("Remaining time:" +  timespan(llGetUnixTime()-LEASED_UNTIL));
+        debug("Remaining time:" +  secondsToHumanFormat(llGetUnixTime()-LEASED_UNTIL));
 
         if (RENEWABLE)
         {
@@ -1043,9 +1050,9 @@ state leased
 
 
         if(LEASED_UNTIL < llGetUnixTime())
-        statusUpdate("Claim due since " + timespan(llGetUnixTime()-LEASED_UNTIL));
+        statusUpdate("Claim due since " + secondsToHumanFormat(llGetUnixTime()-LEASED_UNTIL));
         else
-        llInstantMessage(touchedKey,"Space currently rented by " + LEASER);
+        llWhisper(0, rentalInfo());
 
         // same as money
         if (touchedKey == LEASERID && RENEWABLE)
@@ -1056,8 +1063,8 @@ state leased
             LEASED_UNTIL = llGetUnixTime() + (integer) (DAYSEC * DURATION);
             llInstantMessage(LEASERID, "Renewed until " + Unix2PST_PDT(LEASED_UNTIL));
             dialog();
-        } else {
-            llInstantMessage(touchedKey, "Leased until " + Unix2PST_PDT(LEASED_UNTIL));
+        // } else {
+        //     llInstantMessage(touchedKey, "Leased until " + Unix2PST_PDT(LEASED_UNTIL));
         }
 
         // same as money
