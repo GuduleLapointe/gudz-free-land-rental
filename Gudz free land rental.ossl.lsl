@@ -64,6 +64,7 @@ vector SIZE_LEASED = <1,0.2,0.125>;        // the signs size when rented (it wil
 string configFile = ".config";
 string statusFile = "~status";
 integer configured = FALSE;
+key httpNotecardId;
 
 // End of user configurable variables
 
@@ -495,7 +496,7 @@ getConfig()
     loadConfigLines(lines, TRUE); // Process lines with configURL parameter
 }
 
-loadConfigLines(list lines, boolean processConfigURL)
+loadConfigLines(list lines, integer processConfigURL)
 {
     integer count = llGetListLength(lines);
     integer i = 0;
@@ -512,7 +513,7 @@ loadConfigLines(list lines, boolean processConfigURL)
             if (processConfigURL && var == "configurl") {
                 llOwnerSay("reading config from URL");
                 // Config URL is found, load config from the URL and stop processing local config
-                httpNotecardId = llHTTPRequest(url, [HTTP_METHOD, "GET", HTTP_MIMETYPE, "text/plain;charset=utf-8"], "");
+                httpNotecardId = llHTTPRequest(val, [HTTP_METHOD, "GET", HTTP_MIMETYPE, "text/plain;charset=utf-8"], "");
                 return;
             }
 
@@ -721,7 +722,15 @@ default
             reloadConfig();
         }
     }
-}
+
+    http_response(key id, integer status, list meta, string body) {
+        if (id == httpNotecardId) {
+            llOwnerSay("got answer " + body);
+            list remoteLines = llParseString2List(body, ["\n"], []);
+            // Process the remote config
+            loadConfigLines(remoteLines, FALSE);
+        }
+    }}
 
 state unleased
 {

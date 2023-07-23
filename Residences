@@ -1,5 +1,5 @@
-duration = 0.041667
-maxDuration = 1
+duration = 180
+maxDuration = 3650
 renewable = TRUE
-expireReminder = 0.0014
-expireGrace = 0.0014
+expireReminder = 10
+expireGrace = 30
