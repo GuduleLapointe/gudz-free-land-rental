@@ -200,19 +200,21 @@ dialog()
     }
     llSetTimerEvent(30);
     llSetText("",<1,0,0>, 1.0);
-    //llInstantMessage(LEASERID,"Your parcel is ready.\n" + get_rentalbox_url());
+    //llInstantMessage(LEASERID,"Your parcel is ready.\n" + parcelURL());
 
     dialogActiveFlag  = TRUE;
 }
 
-string get_rentalbox_info()
+string parcelRentalInfo()
 {
-    return llGetRegionName()  + " @ " + (string)parcelPos + " (Renter: \"" + LEASER + "\", Expire: " + secondsToHumanFormat(LEASED_UNTIL - llGetUnixTime()) + ")";
+    return llGetRegionName()  + " @ " + unTrailVector(parcelPos) +
+    "\n" + rentalInfo();
+     // " (Renter: \"" + LEASER + "\", Expire: " + secondsToHumanFormat(LEASED_UNTIL - llGetUnixTime()) + ")";
 }
-string get_rentalbox_url()
+string parcelURL()
 {
-    return "secondlife://" + strReplace(osGetGridGatekeeperURI(), "http://", "") + "/" + llGetRegionName() + "/";
-    // + (string)parcelPos.x + "," + (string)parcelPos.y + "," + (string)parcelPos.z;
+    return "secondlife://" + strReplace(osGetGridGatekeeperURI(), "http://", "") + "/" + llGetRegionName() + "/"
+    + unTrailFloat(parcelPos.x) + "," + unTrailFloat(parcelPos.y) + "," + unTrailFloat(parcelPos.z);
 }
 
 list trimmedCSV2list ( string data ) {
@@ -491,9 +493,12 @@ getConfig()
 
     list lines = llParseString2List(osGetNotecard(configFile), "\n", "");
     loadConfigLines(lines);
+
+    save_data();
 }
 
 reloadConfig() {
+    save_data();
     llOwnerSay("Reloading config");
     getConfig();
     llOwnerSay(rentalConditions());
@@ -759,7 +764,7 @@ state unleased
 
             SENT_WARNING = FALSE;
             save_data();
-            llInstantMessage(llGetOwner(), "NEW CLAIM -" +  get_rentalbox_info());
+            llInstantMessage(llGetOwner(), "NEW CLAIM -" +  parcelRentalInfo());
             list rules =[
                 PARCEL_DETAILS_NAME, shortName + "'s land",
                 PARCEL_DETAILS_DESC, LEASER + "'s land; "
@@ -771,7 +776,7 @@ state unleased
             osSetParcelDetails(parcelPos, rules);
             llSetText("",<1,0,0>, 1.0);
             llInstantMessage(LEASERID,"Your parcel is ready.\n"
-            + get_rentalbox_url() + "\n" + "Please join the group to receive status updates.");
+            + parcelURL() + "\n" + "Please join the group to receive status updates.");
             osInviteToGroup(LEASERID);
             state leased;
         }
@@ -938,8 +943,8 @@ state leased
                     save_data();
                     llSetScale(SIZE_LEASED);
                     //setTexture(texture_leased,textureSides);
-                    statusUpdate("Renewed" + get_rentalbox_info());
-                    // llInstantMessage(llGetOwner(), "Renewed: " + get_rentalbox_info());
+                    statusUpdate("Renewed" + parcelRentalInfo());
+                    // llInstantMessage(llGetOwner(), "Renewed: " + parcelRentalInfo());
                 }
             }
             else
@@ -991,10 +996,10 @@ state leased
 
         if (count -1  > MAX_PRIMS && !SENT_PRIMWARNING) // no need to countthe sign, too.
         {
-            llInstantMessage(LEASERID, get_rentalbox_info() + " There are supposed to be no more than " + (string)MAX_PRIMS
+            llInstantMessage(LEASERID, parcelRentalInfo() + " There are supposed to be no more than " + (string)MAX_PRIMS
                 + " prims rezzed, yet there are "
                 +(string) count + " prims rezzed on this parcel. Plese remove the excess.");
-            llInstantMessage(llGetOwner(),  get_rentalbox_info() + " There are supposed to be no more than " + (string)MAX_PRIMS
+            llInstantMessage(llGetOwner(),  parcelRentalInfo() + " There are supposed to be no more than " + (string)MAX_PRIMS
                 + " prims rezzed, yet there are "
                 +(string) count + " prims rezzed on this parcel, warning sent to " + LEASER );
             SENT_PRIMWARNING = TRUE;
@@ -1024,8 +1029,8 @@ state leased
                 if (!SENT_WARNING)
                 {
                     debug("sending warn");
-                    llInstantMessage(LEASERID, "Your claim needs to be renewed, please go to your parcel " + get_rentalbox_url() + " and touch the sign to claim it again! - " + get_rentalbox_info());
-                    llInstantMessage(llGetOwner(), "CLAIM DUE - " + get_rentalbox_info());
+                    llInstantMessage(LEASERID, "Your claim needs to be renewed, please go to your parcel " + parcelURL() + " and touch the sign to claim it again! - " + parcelRentalInfo());
+                    llInstantMessage(llGetOwner(), "CLAIM DUE - " + parcelRentalInfo());
                     SENT_WARNING = TRUE;
                     save_data();
                 }
@@ -1040,7 +1045,7 @@ state leased
                 //llSetPos(parcelPos);
                 //llReturnObjectsByOwner(LEASERID,  OBJECT_RETURN_PARCEL_OWNER);
                 llInstantMessage(LEASERID, "Your claim has expired. Please cleanup the parcel. Objects owned by you on the parcel will be returned soon.");
-                llInstantMessage(llGetOwner(), "CLAIM EXPIRED: CLEANUP! -  " + get_rentalbox_info());
+                llInstantMessage(llGetOwner(), "Rental expired\n" + parcelRentalInfo());
                 reclaimParcel();
                 MY_STATE = 0;
                 save_data();
@@ -1049,7 +1054,7 @@ state leased
         }
         else if (LEASED_UNTIL < llGetUnixTime())
         {
-            llInstantMessage(llGetOwner(), "CLAIM EXPIRED: CLEANUP! -  " + get_rentalbox_info());
+            llInstantMessage(llGetOwner(), "Rental expired\n" + parcelRentalInfo());
             debug("TIME EXPIRED. RETURNING TO DEFAULT");
             reclaimParcel();
             MY_STATE = 0;
