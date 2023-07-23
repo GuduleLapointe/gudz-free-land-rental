@@ -1,7 +1,7 @@
 /**
- * Gudule's free land rental
+ * Gudz Free Land Rental
  *
- * @Version 1.5-dev-3
+* @version 1.5-beta-4
  * @author Gudule Lapointe gudule.lapointe@speculoos.world:8002
  * @licence  GNU Affero General Public License
  *
@@ -48,7 +48,7 @@
  */
 
 // User configurable variables:
-integer DEBUG = TRUE;    // set to TRUE to see debug info
+integer DEBUG = FALSE;    // set to TRUE to see debug info
 vector parcelDistance = <0,2,0>; // distance between the rental sign and the parcel (allow to place the sign outside the parcel)
 integer checkerLink = 4;
 
@@ -182,14 +182,43 @@ integer rentRemaining() {
 }
 
 string rentRemainingHuman() {
-    return secondsToDuration(rentRemaining());
+    return secondsToDuration( llAbs( rentRemaining() ) );
+}
+
+integer isExpired() {
+    return (rentRemaining() < 0);
+}
+
+integer isAboutToExpire() {
+    integer remaining = rentRemaining();
+    return (remaining >= 0 && remaining < EXPIRE_REMINDER);
+}
+
+integer isInGrace() {
+    integer remaining = rentRemaining();
+    return (remaining <= 0 && llAbs(remaining) < EXPIRE_GRACE);
 }
 
 string rentalInfo() {
-    return "Rented by  " + LEASER
-    + " until " + Unix2PST_PDT(LEASED_UNTIL)
-    // + " remaining " + secondsToDuration(LEASED_UNTIL - llGetUnixTime()) + ")"
-    ;
+    string message;
+    integer remaining = rentRemaining();
+
+    if(!configured) {
+        message = "Not configured";
+    }
+    else if ( ! isRented() ) {
+        message = "Available";
+    }
+    else if ( isRented() ) {
+        message = "Rented by " + LEASER;
+
+        if(isAboutToExpire()) message += ", renew before " + rentRemainingHuman();
+        else if(isInGrace()) message += ", renewal due for " + rentRemainingHuman();
+        // not sure expired would happen, it might fall into Available situation
+        else if(isExpired()) message += " (expiread)";
+        else message += " until " + Unix2PST_PDT(LEASED_UNTIL) + " (" + rentRemainingHuman() + ")";
+    }
+    return message;
 }
 
 string rentalConditions() {
@@ -223,8 +252,9 @@ dialog()
     {
         llDialog(touchedKey,
         "Leased until " + Unix2PST_PDT(LEASED_UNTIL)
-        + ". Abandon land?"
-        ,["Abandon","-","No"],channel);
+        + "\n(" + rentRemainingHuman() + " remaining)"
+        + "\nAbandon land?"
+        ,["Abandon","Keep"],channel);
     } else {
         llDialog(touchedKey,"Do you wish to claim this parcel?",["Yes","-","No"],channel);
     }
@@ -272,10 +302,10 @@ load_data()
     if (llStringLength(desc) < 5) // SL does not allow blank description
     {
         data = trimmedCSV2list(initINFO);
-    }
-    else if (DEBUG)
-    {
-        data = trimmedCSV2list(DEBUGINFO);    // 5 minute fast timers
+    // }
+    // else if (DEBUG)
+    // {
+    //     data = trimmedCSV2list(DEBUGINFO);    // 5 minute fast timers
     }
 
     // Should be 6 for unconfigured and 11 for configured and in action
@@ -317,7 +347,6 @@ save_data()
     (string)WARNING_SENT,           // 10: IDX_WARNING_SENT
     unTrailVector(TERMINAL_POS)           // 11: IDX_TERMINAL_POS
     ];
-
     string descConfig = llDumpList2String(data, ",");
     llSetObjectDesc(descConfig);
 
@@ -524,7 +553,7 @@ checkValidPosition()
 
 getConfig()
 {
-    debug("\n== Loading config ==");
+    debug("\n\n== Loading config ==");
 
     load_data();
     if (llGetInventoryType(configFile) != INVENTORY_NOTECARD)
@@ -537,7 +566,7 @@ getConfig()
 }
 
 string listToDebug(list lines) {
-    return ":\n[\n " + llDumpList2String(lines, ",\n ") + "\n]";
+    return ":\n[\n\t" + llDumpList2String(lines, ",\n\t") + "\n]";
 }
 
 getConfigLines(list lines, integer localConfig)
@@ -554,7 +583,7 @@ getConfigLines(list lines, integer localConfig)
             string val = llStringTrim(llList2String(params, 1), STRING_TRIM);
 
             if (localConfig && var == "configurl") {
-                llOwnerSay("abort local config, reading from URL " + val );
+                debug("Load config from URL " + val );
                 // Config URL is found, load config from the URL and stop processing local config
                 httpNotecardId = llHTTPRequest(val, [HTTP_METHOD, "GET", HTTP_MIMETYPE, "text/plain;charset=utf-8"], "");
                 return;
@@ -589,7 +618,7 @@ getConfigLines(list lines, integer localConfig)
     }
     while (i < count);
 
-    debug("\n= Config loaded =");
+    debug (rentalConditions() + "\n== Config loaded ==\n");
     switchState();
 }
 
@@ -733,7 +762,8 @@ default
     state_entry()
     {
         scriptState = "default";
-        debug("\n\n=== Entering state " + scriptState + "===");
+        debug("\n\n\n\n=== INITIALIZING ===");
+
         parcelPos = llGetPos() + parcelDistance * llGetRot();
         parcelArea = llList2Integer(llGetParcelDetails(parcelPos, [PARCEL_DETAILS_AREA]),0);
         checkValidPosition();
@@ -774,7 +804,6 @@ default
 
     http_response(key id, integer status, list meta, string body) {
         if (id == httpNotecardId) {
-            llOwnerSay("got answer\n" + llStringTrim(body, STRING_TRIM));
             list remoteLines = llParseString2List(body, ["\n"], []);
             // Process the remote config
             getConfigLines(remoteLines, FALSE);
@@ -791,7 +820,7 @@ state unleased
 
         if (RENT_STATE !=0 || DURATION == 0)
         {
-            llOwnerSay("Returning to default. Data is not correct.");
+            llOwnerSay("Error: Data is not correct, returning to default.");
             state default;
         }
 
@@ -1119,6 +1148,7 @@ state leased
             drawText(parcelName);
 
             LEASED_UNTIL = llGetUnixTime() + (integer) (DAYSEC * DURATION);
+            save_data();
             llInstantMessage(LEASERID, "Renewed until " + Unix2PST_PDT(LEASED_UNTIL));
             dialog();
         // } else {
