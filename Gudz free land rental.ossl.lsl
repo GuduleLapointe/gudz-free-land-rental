@@ -141,6 +141,7 @@ float touchStarted;
 string scriptState;
 
 vector parcelPos;
+vector confirmPos;
 vector signPos;
 integer parcelArea;
 list parcelDetails;
@@ -627,6 +628,7 @@ checkValidPosition()
     if(boardParcelID == beaconParcelID)
     {
         debug("Position is not valid");
+        TERMINAL_POS = <0,0,0>;
         llOwnerSay("Position is not valid, please make sure the sign is outside the parcel and the beacon inside");
         setBeacon("invalid");
     }
@@ -636,12 +638,11 @@ checkValidPosition()
     {
         debug("Terminal position already verified");
         setBeacon("ready");
-        // setRentalState();
-        // state waiting;
+        setRentalState();
     } else {
         debug("Terminal position has changed, ask to check");
-        TERMINAL_POS = <0,0,0>;
         setBeacon("validate");
+        state waiting;
     }
     currentPos = llList2Vector(llGetLinkPrimitiveParams(checkerLink, [ PRIM_POS_LOCAL ]), 0);
     // if(currentPos != <0,0,0>)
@@ -660,14 +661,16 @@ setBeacon(string status) {
             PRIM_SIZE, <0.01,0.01,0.1>,
             PRIM_TEXTURE, ALL_SIDES, TEXTURE_BLANK, <0,0,0>, <0,0,0>, 0.0
         ]);
-        llSleep(5);
+        // llSleep(5);
         firstLaunch = FALSE;
         signPos = llGetPos();
-        TERMINAL_POS = signPos;
+        TERMINAL_POS = llGetPos();
+        // debug("saving terminal pos " + (string)TERMINAL_POS);
         save_data();
         setRentalState();
+        // state waiting;
     } else if (status == "validate") {
-        debug(scriptState + " beacon wating for validation");
+        debug("current state " + scriptState + ", beacon waiting for validation");
         llSetLinkPrimitiveParamsFast(checkerLink, [
             PRIM_POS_LOCAL, parcelDistance,
             PRIM_COLOR, ALL_SIDES, <0,1,0>, 0.75,
@@ -675,8 +678,11 @@ setBeacon(string status) {
             PRIM_SIZE, <0.25,0.25,5>,
             PRIM_TEXTURE, ALL_SIDES, TEXTURE_BLANK, <0,0,0>, <0,0,0>, 0.0
         ]);
-        state waiting;
+        TERMINAL_POS = llGetPos();
+        if(scriptState == "waiting") dialogValidatePos();
+        else state waiting;
     } else if (status == "invalid") {
+        save_data();
         debug("beacon invalid position");
         llSetLinkPrimitiveParamsFast(checkerLink, [
         PRIM_POS_LOCAL, parcelDistance,
@@ -684,6 +690,7 @@ setBeacon(string status) {
         PRIM_GLOW, ALL_SIDES, 0.05,
         PRIM_SIZE, <0.25,0.25,5>
         ]);
+        TERMINAL_POS = <0,0,0>;
         state waiting;
     } else {
         debug("unmanaged status " + status);
@@ -698,11 +705,14 @@ dialogValidatePos() {
         }
         integer channel = llCeil(llFrand(1000000)) + 100000 * -1; // negative channel # cannot be typed
         listener = llListen(channel,"","","");
+
+        confirmPos = llGetPos();
         llDialog(llGetOwner(),
         "WARNING:\n"
         + "Place the vendor OUTSIDE the rented parcel, but make sure the YELLOW MARK stays INSIDE the rented parcel. Then click the Checked button.",
         ["Checked"],
         channel);
+
     } else {
         debug("state " + scriptState + ", switching to waiting"); 
         state waiting;
@@ -1392,6 +1402,7 @@ state waiting
         scriptState = "waiting";
         debug("\n\n== Entering state " + scriptState + "==");
 
+        if(TERMINAL_POS == llGetPos())
         dialogValidatePos();
 
         // setBeacon("validate");
@@ -1402,7 +1413,13 @@ state waiting
     {
         if(id == llGetOwner() && message == "Checked")
         {
-            setBeacon("ready");
+            if(confirmPos == llGetPos()) {
+                confirmPos = <0,0,0>;
+                setBeacon("ready");
+            } else {
+                confirmPos = <0,0,0>;
+                llOwnerSay("Error, the sign has moved");
+            }
         }
     }
     on_rez(integer start_param)
