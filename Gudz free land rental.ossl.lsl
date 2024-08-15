@@ -177,7 +177,7 @@ scrup(integer enable) {
         if(loginURI=="") llOwnerSay("loginURI not configured");
         else if(scrupURL=="") llOwnerSay("scrupURL not configured");
         else if(!scrupAllowUpdates) debug("scrupAllowUpdates is set to false");
-        else debug("scup suspend");
+        else debug("scrup suspend");
         llSetRemoteScriptAccessPin(0);
         return;
     }
@@ -284,7 +284,7 @@ string rentalConditions() {
     if(isRented()) return rentalInfo();
 
     string message = "\nRental conditions: "
-    + "\n" + llGetObjectDesc()
+    // + "\n" + llGetObjectDesc()
     + "\n    Duration " + daysToDuration(DURATION)
     + "\n    Renewable " + ( RENEWABLE ? "yes" : "no")
     + ( RENEWABLE && MAX_DURATION > 0 ? " (maximum " + daysToDuration(MAX_DURATION) + ")" : "" )
@@ -388,8 +388,11 @@ load_data()
     LEASER = llKey2Name(LEASERID);
     LEASED_UNTIL = llList2Integer(data, IDX_LEASED_UNTIL);
     WARNING_SENT = llList2Integer(data, IDX_WARNING_SENT);
-    TERMINAL_POS = llList2Vector(data, IDX_TERMINAL_POS);
-
+    string TerminalPosCheck = llList2String(data, IDX_TERMINAL_POS) + ","
+    + llList2String(data, IDX_TERMINAL_POS + 1) + ","
+    + llList2String(data, IDX_TERMINAL_POS + 2)
+    ;
+    TERMINAL_POS = (vector)TerminalPosCheck;
     configured = ( rent_state_check != "" );
 }
 
@@ -397,18 +400,18 @@ save_data()
 {
     // Prepare data, don
     list data =  [
-    unTrailFloat(DURATION),                 // 0: IDX_DURATION
-    unTrailFloat(MAX_DURATION),              // 1: IDX_MAX_DURATION
-    "",                // 2: IDX_MAX_PRIMS (deprecated, dynamic value)
-    (string)RENEWABLE,           // 3: IDX_RENEWABLE
-    unTrailFloat(EXPIRE_REMINDER),            // 4: IDX_EXPIRE_REMINDER
-    unTrailFloat(EXPIRE_GRACE),            // 5: IDX_EXPIRE_GRACE
-    (string)RENT_STATE,               // 6: IDX_RENT_STATE
-    "",                 // 7: IDX_LEASER (deprecated, dynamic value)
-    ( LEASERID == NULL_KEY ? "" : (string)LEASERID ),  // 8: IDX_LEASERID
-    (string)LEASED_UNTIL,           // 9: IDX_LEASED_UNTIL
-    (string)WARNING_SENT,           // 10: IDX_WARNING_SENT
-    unTrailVector(TERMINAL_POS)           // 11: IDX_TERMINAL_POS
+        unTrailFloat(DURATION),         // 0: IDX_DURATION
+        unTrailFloat(MAX_DURATION),     // 1: IDX_MAX_DURATION
+        "",                             // 2: IDX_MAX_PRIMS (deprecated, dynamic value)
+        (string)RENEWABLE,              // 3: IDX_RENEWABLE
+        unTrailFloat(EXPIRE_REMINDER),  // 4: IDX_EXPIRE_REMINDER
+        unTrailFloat(EXPIRE_GRACE),     // 5: IDX_EXPIRE_GRACE
+        (string)RENT_STATE,             // 6: IDX_RENT_STATE
+        "",                             // 7: IDX_LEASER (deprecated, dynamic value)
+        ( LEASERID == NULL_KEY ? "" : (string)LEASERID ),  // 8: IDX_LEASERID
+        (string)LEASED_UNTIL,           // 9: IDX_LEASED_UNTIL
+        (string)WARNING_SENT,           // 10: IDX_WARNING_SENT
+        unTrailVector(TERMINAL_POS)     // 11: IDX_TERMINAL_POS
     ];
     string descConfig = llDumpList2String(data, ",");
     llSetObjectDesc(descConfig);
@@ -600,16 +603,108 @@ string Unix2PST_PDT_pre_process(integer insecs)
     return (llList2String(weekdays, DayOfWeek) + " " + str + PST_PDT);
 }
 
+checkChanges(integer change) {
+    if (change & CHANGED_INVENTORY) {
+        debug("CHANGED_INVENTORY " + (string)change);
+        getConfig();
+    } else if (change & CHANGED_LINK) {
+        state waiting;
+    } else if (change & 0x8000) {
+        checkValidPosition();
+    }
+}
+
 checkValidPosition()
 {
-    vector currentPos = llGetPos() + parcelDistance * llGetRot();
-    if(parcelPos != currentPos)
+    debug("Checking position");
+    vector currentPos = llGetPos();
+    parcelPos = llGetPos() + parcelDistance * llGetRot();
+
+    key boardParcelID = llGetParcelDetails(currentPos, [PARCEL_DETAILS_ID]);
+    key beaconParcelID = llGetParcelDetails(parcelPos, [PARCEL_DETAILS_ID]);
+    // debug("\n boardParcelID " + boardParcelID + " position " + (string)currentPos + "
+    // \n beaconParcelID " + beaconParcelID + " position " + (string)parcelPos);
+    if(boardParcelID == beaconParcelID)
     {
-        state waiting;
+        debug("Position is not valid");
+        llOwnerSay("Position is not valid, please make sure the sign is outside the parcel and the beacon inside");
+        setBeacon("invalid");
+    }
+    debug("Position is valid");
+    // getConfig();
+    if(unTrailVector(TERMINAL_POS) == unTrailVector(currentPos))
+    {
+        debug("Terminal position already verified");
+        setBeacon("ready");
+        // setRentalState();
+        // state waiting;
+    } else {
+        debug("Terminal position has changed, ask to check");
+        TERMINAL_POS = <0,0,0>;
+        setBeacon("validate");
     }
     currentPos = llList2Vector(llGetLinkPrimitiveParams(checkerLink, [ PRIM_POS_LOCAL ]), 0);
-    if(currentPos != <0,0,0>)
-    {
+    // if(currentPos != <0,0,0>)
+    // {
+    //     state waiting;
+    // }
+}
+
+setBeacon(string status) {
+    if(status == "ready") {
+        debug("beacon ready");
+        llSetLinkPrimitiveParamsFast(checkerLink, [
+            PRIM_POS_LOCAL, <0,0,0>,
+            PRIM_COLOR, ALL_SIDES, <1,1,1>, 0.0,
+            PRIM_GLOW, ALL_SIDES, 0.00,
+            PRIM_SIZE, <0.01,0.01,0.1>,
+            PRIM_TEXTURE, ALL_SIDES, TEXTURE_BLANK, <0,0,0>, <0,0,0>, 0.0
+        ]);
+        llSleep(5);
+        firstLaunch = FALSE;
+        signPos = llGetPos();
+        TERMINAL_POS = signPos;
+        save_data();
+        setRentalState();
+    } else if (status == "validate") {
+        debug(scriptState + " beacon wating for validation");
+        llSetLinkPrimitiveParamsFast(checkerLink, [
+            PRIM_POS_LOCAL, parcelDistance,
+            PRIM_COLOR, ALL_SIDES, <0,1,0>, 0.75,
+            PRIM_GLOW, ALL_SIDES, 0.05,
+            PRIM_SIZE, <0.25,0.25,5>,
+            PRIM_TEXTURE, ALL_SIDES, TEXTURE_BLANK, <0,0,0>, <0,0,0>, 0.0
+        ]);
+        state waiting;
+    } else if (status == "invalid") {
+        debug("beacon invalid position");
+        llSetLinkPrimitiveParamsFast(checkerLink, [
+        PRIM_POS_LOCAL, parcelDistance,
+        PRIM_COLOR, ALL_SIDES, <1,0,0>, 0.75,
+        PRIM_GLOW, ALL_SIDES, 0.05,
+        PRIM_SIZE, <0.25,0.25,5>
+        ]);
+        state waiting;
+    } else {
+        debug("unmanaged status " + status);
+    }
+}
+
+dialogValidatePos() {
+    if(scriptState == "waiting") {
+        debug("state waiting, opening dialog"); 
+        if(listener != 0) {
+            llListenRemove(listener);
+        }
+        integer channel = llCeil(llFrand(1000000)) + 100000 * -1; // negative channel # cannot be typed
+        listener = llListen(channel,"","","");
+        llDialog(llGetOwner(),
+        "WARNING:\n"
+        + "Place the vendor OUTSIDE the rented parcel, but make sure the YELLOW MARK stays INSIDE the rented parcel. Then click the Checked button.",
+        ["Checked"],
+        channel);
+    } else {
+        debug("state " + scriptState + ", switching to waiting"); 
         state waiting;
     }
 }
@@ -683,7 +778,7 @@ getConfigLines(list lines, integer localConfig)
     while (i < count);
 
     debug (rentalConditions() + "\n== Config loaded ==\n");
-    switchState();
+    setRentalState();
 }
 
 
@@ -814,30 +909,40 @@ string unTrailVector(vector v)
     return "<" + unTrailFloat(v.x) + "," + unTrailFloat(v.y) +","+ unTrailFloat(v.z) + ">";
 }
 
-switchState() {
-    llSetScale(SIZE_LEASED);
-    setTexture(texture_expired,textureSides);
+setRentalState() {
     if(isRented() ) {
+        debug("Leased");
         llSetObjectName(LEASER + "'s Nameplate GFLR " + version);
+
+        llSetScale(SIZE_LEASED);
+        string parcelName = (string)llGetParcelDetails(parcelPos, [PARCEL_DETAILS_NAME]);
+        drawText(parcelName);
+        llSetText("",<0,0,0>, 1.0);
 
         // llWhisper(0, rentalConditions());
         if (scriptState != "leased" ) {
+            debug("switching to leased state");
             state leased;
         }
     } else {
+        llSetScale(SIZE_UNLEASED);
+        setTexture(texture_unleased,textureSides);
+        llSetText("",<0,0,0>, 1.0);
+        debug("Unleased");
         llSetObjectName( llGetScriptName() );
-        if(configured) {
-            // llWhisper(0, rentalConditions());
+        // if(configured) {
+        //     // llWhisperx(0, rentalConditions());
             if (scriptState != "unleased" ) {
+                debug("Switching to unleased state");
                 state unleased;
             }
-            } else {
-                llOwnerSay("Click this rental box to activate after configuring the DESCRIPTION.");
-                llSetText("DISABLED",<0,0,0>, 1.0);
-                if (scriptState != "default" ) {
-                    state default;
-                }
-            }
+        // } else {
+        //     llOwnerSay("Click this rental box to activate after configuring the DESCRIPTION.");
+        //     llSetText("DISABLED",<0,0,0>, 1.0);
+        //     if (scriptState != "default" ) {
+        //         state default;
+        //     }
+        // }
     }
 }
 
@@ -848,12 +953,11 @@ default
         scrup(ACTIVE);
         scriptState = "default";
         debug("\n\n\n\n=== INITIALIZING ===");
-
         parcelPos = llGetPos() + parcelDistance * llGetRot();
         parcelArea = llList2Integer(llGetParcelDetails(parcelPos, [PARCEL_DETAILS_AREA]),0);
-        checkValidPosition();
 
         getConfig();
+        checkValidPosition();
     }
 
     touch_start(integer total_number)
@@ -864,7 +968,7 @@ default
         if (touchedKey == llGetOwner())
         {
             statusUpdate("Activating...");
-            switchState();
+            setRentalState();
             // if (RENT_STATE == 0)
             //     state unleased;
             // else if (RENT_STATE == 1)
@@ -879,12 +983,13 @@ default
 
     changed(integer change)
     {
-        if(change & CHANGED_LINK)
-        {
-            state waiting;
-        } else if (change & CHANGED_INVENTORY) {
-            getConfig();
-        }
+        checkChanges(change);
+        // if(change & CHANGED_LINK)
+        // {
+        //     state waiting;
+        // } else if (change & CHANGED_INVENTORY) {
+        //     getConfig();
+        // }
     }
 
     http_response(key id, integer status, list meta, string body) {
@@ -907,8 +1012,12 @@ state unleased
 
         if (RENT_STATE !=0 || DURATION == 0)
         {
-            llOwnerSay("Error: Data is not correct, returning to default.");
-            state default;
+            llOwnerSay("Error: Data is not correct, returning to default."
+            + "\nRENT_STATE " + RENT_STATE
+            + "\nDURATION " + DURATION
+            );
+            // llResetScript();
+            // state default;
         }
 
         llSetScale(SIZE_UNLEASED);
@@ -953,7 +1062,7 @@ state unleased
             llInstantMessage(LEASERID,"Your parcel is ready.\n"
             + parcelHopURL() + "\n" + "Please join the group to receive status updates.");
             osInviteToGroup(LEASERID);
-            switchState(); // state leased;
+            setRentalState(); // state leased;
         }
     }
 
@@ -1027,20 +1136,21 @@ state unleased
     }
     changed(integer change)
     {
-        if(change & CHANGED_LINK)
-        {
-            state waiting;
-        } else if (change & CHANGED_REGION_START) {
-            // llResetScript();
-        } else if (change & CHANGED_INVENTORY) {
-            getConfig();
-        } else {
-            vector currentPos = llGetPos() + parcelDistance * llGetRot();
-            if(currentPos != parcelPos)
-            {
-                state waiting;
-            }
-        }
+        checkChanges(change);
+        // if(change & CHANGED_LINK)
+        // {
+        //     state waiting;
+        // } else if (change & CHANGED_REGION_START) {
+        //     // llResetScript();
+        // } else if (change & CHANGED_INVENTORY) {
+        //     getConfig();
+        // } else {
+        //     vector currentPos = llGetPos() + parcelDistance * llGetRot();
+        //     if(currentPos != parcelPos)
+        //     {
+        //         state waiting;
+        //     }
+        // }
     }
 }
 
@@ -1060,7 +1170,7 @@ state leased
             save_data();
             llOwnerSay("Returning to unleased. Data was not correct.");
             // state unleased;
-            switchState();
+            setRentalState();
         }
         llSetScale(SIZE_LEASED);
         string parcelName = (string)llGetParcelDetails(parcelPos, [PARCEL_DETAILS_NAME]);
@@ -1084,7 +1194,7 @@ state leased
                 save_data();
                 statusUpdate("Returning to unleased. Data is not correct.");
                 // state unleased;
-                switchState();
+                setRentalState();
             }
             else if (RENEWABLE)
             {
@@ -1117,7 +1227,7 @@ state leased
             RENT_STATE = 0;
             save_data();
             // state unleased;
-            switchState();
+            setRentalState();
         }
     }
 
@@ -1256,20 +1366,21 @@ state leased
     }
     changed(integer change)
     {
-        if(change & CHANGED_LINK)
-        {
-            state waiting;
-        } else if (change & CHANGED_REGION_START) {
-            // llResetScript();
-        } else if (change & CHANGED_INVENTORY) {
-            getConfig();
-        } else {
-            vector currentPos = llGetPos() + parcelDistance * llGetRot();
-            if(currentPos != parcelPos)
-            {
-                state waiting;
-            }
-        }
+        checkChanges(change);
+        // if(change & CHANGED_LINK)
+        // {
+        //     state waiting;
+        // } else if (change & CHANGED_REGION_START) {
+        //     // llResetScript();
+        // } else if (change & CHANGED_INVENTORY) {
+        //     getConfig();
+        // } else {
+        //     vector currentPos = llGetPos() + parcelDistance * llGetRot();
+        //     if(currentPos != parcelPos)
+        //     {
+        //         state waiting;
+        //     }
+        // }
     }
 }
 
@@ -1280,21 +1391,10 @@ state waiting
         scrup(FALSE);
         scriptState = "waiting";
         debug("\n\n== Entering state " + scriptState + "==");
-        integer positionConfirmed = TRUE;
-        positionConfirmed = FALSE;
-        llSetLinkPrimitiveParamsFast(checkerLink, [
-        PRIM_POS_LOCAL, parcelDistance,
-        PRIM_COLOR, ALL_SIDES, <1,1,0>, 0.75,
-        PRIM_GLOW, ALL_SIDES, 0.05,
-        PRIM_SIZE, <0.25,0.25,5>
-        ]);
-        integer channel = llCeil(llFrand(1000000)) + 100000 * -1; // negative channel # cannot be typed
-        listener = llListen(channel,"","","");
-        llDialog(llGetOwner(),
-        "WARNING:\n"
-        + "Place the vendor OUTSIDE the rented parcel, but make sure the YELLOW MARK stays INSIDE the rented parcel. Then click the Checked button.",
-        ["Checked"],
-        channel);
+
+        dialogValidatePos();
+
+        // setBeacon("validate");
         //
     }
 
@@ -1302,16 +1402,7 @@ state waiting
     {
         if(id == llGetOwner() && message == "Checked")
         {
-            llSetLinkPrimitiveParamsFast(checkerLink, [
-            PRIM_POS_LOCAL, <0,0,0>,
-            PRIM_COLOR, ALL_SIDES, <1,1,1>, 0.0,
-            PRIM_GLOW, ALL_SIDES, 0.00,
-            PRIM_SIZE, <0.01,0.01,0.1>
-            ]);
-            llSleep(5);
-            firstLaunch = FALSE;
-            signPos = llGetPos();
-            state default;
+            setBeacon("ready");
         }
     }
     on_rez(integer start_param)
@@ -1320,10 +1411,20 @@ state waiting
     }
     changed(integer change)
     {
-        if(change & CHANGED_LINK) {
-            state waiting;
-        } else if (change & CHANGED_INVENTORY) {
-            getConfig();
-        }
+        checkChanges(change);
+
+        // if(change & CHANGED_LINK) {
+        //     debug("CHANGED_LINK " + (string)change);
+        //     checkValidPosition();
+        //     // state waiting;
+        // } else if (change & CHANGED_INVENTORY) {
+        //     debug("CHANGED_INVENTORY " + (string)change);
+        //     getConfig();
+        // } else if (change & 0x8000) {
+        //     debug("Changed pos " + (string)change);
+        //     getConfig();
+        // } else {
+        //     debug("changed " + (string)change);
+        // }
     }
 }
