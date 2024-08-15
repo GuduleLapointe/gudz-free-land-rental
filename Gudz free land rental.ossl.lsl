@@ -144,6 +144,7 @@ vector parcelPos;
 vector confirmPos;
 vector signPos;
 integer parcelArea;
+string parcelName;
 list parcelDetails;
 
 integer IDX_DURATION = 0;
@@ -611,14 +612,20 @@ checkChanges(integer change) {
     } else if (change & CHANGED_LINK) {
         state waiting;
     } else if (change & 0x8000) {
+        debug("checkValidPosition called in " + scriptState + " from checkChanges " + change);
         checkValidPosition();
     }
 }
 
 checkValidPosition()
 {
-    debug("Checking position");
     vector currentPos = llGetPos();
+    if(currentPos == signPos && currentPos == TERMINAL_POS) {
+        // Positiion didnn't change since last check, not checking again
+        return;
+    }
+    debug("Checking position");
+
     parcelPos = llGetPos() + parcelDistance * llGetRot();
 
     key boardParcelID = llGetParcelDetails(currentPos, [PARCEL_DETAILS_ID]);
@@ -667,7 +674,8 @@ setBeacon(string status) {
         TERMINAL_POS = llGetPos();
         // debug("saving terminal pos " + (string)TERMINAL_POS);
         save_data();
-        setRentalState();
+        // debug(scriptState + " setBeacon");
+        // setRentalState();
         // state waiting;
     } else if (status == "validate") {
         debug("current state " + scriptState + ", beacon waiting for validation");
@@ -921,11 +929,11 @@ string unTrailVector(vector v)
 
 setRentalState() {
     if(isRented() ) {
-        debug("Leased");
+        debug("setRentalState Leased");
         llSetObjectName(LEASER + "'s Nameplate GFLR " + version);
 
         llSetScale(SIZE_LEASED);
-        string parcelName = (string)llGetParcelDetails(parcelPos, [PARCEL_DETAILS_NAME]);
+        parcelName = (string)llGetParcelDetails(parcelPos, [PARCEL_DETAILS_NAME]);
         drawText(parcelName);
         llSetText("",<0,0,0>, 1.0);
 
@@ -935,10 +943,10 @@ setRentalState() {
             state leased;
         }
     } else {
+        debug("setRentalState Unleased");
         llSetScale(SIZE_UNLEASED);
         setTexture(texture_unleased,textureSides);
         llSetText("",<0,0,0>, 1.0);
-        debug("Unleased");
         llSetObjectName( llGetScriptName() );
         // if(configured) {
         //     // llWhisperx(0, rentalConditions());
@@ -953,6 +961,23 @@ setRentalState() {
         //         state default;
         //     }
         // }
+    }
+}
+
+checkRentalState() {
+    debug("checkRentalState");
+    // getConfig();
+
+    if (RENT_STATE == 0) {
+        debug("not rented, no update needed");
+        state unleased;
+    } else if (RENT_STATE != 1 || DURATION == 0 || LEASER == "")
+    {
+        statusUpdate("Returning to unleased. Data is not correct.");
+        RENT_STATE = 0;
+        save_data();
+        setRentalState();
+        state unleased;
     }
 }
 
@@ -1018,6 +1043,7 @@ state unleased
     {
         scrup(ACTIVE);
         scriptState = "unleased";
+        llSetTimerEvent(0);
         debug("\n\n== Entering state " + scriptState + "==");
 
         if (RENT_STATE !=0 || DURATION == 0)
@@ -1094,7 +1120,9 @@ state unleased
         }
         else
         {
-            if(touchedKey == llGetOwner()) checkValidPosition();
+            if(touchedKey == llGetOwner()) {
+                checkValidPosition();
+            }
 
             // getConfig();
             llInstantMessage(touchedKey, rentalConditions() );
@@ -1137,6 +1165,7 @@ state unleased
     // clear out the channel listener, the menu timed out
     timer()
     {
+        debug("timer in " + scriptState);
         dialogActiveFlag = FALSE;
         llListenRemove(listener);
     }
@@ -1173,15 +1202,8 @@ state leased
         debug("\n\n== Entering state " + scriptState + "==");
         setTexture(texture_busy,textureSides);
 
-        if (RENT_STATE != 1 || DURATION == 0 || LEASER == "")
-        {
+        checkRentalState();
 
-            RENT_STATE = 0;
-            save_data();
-            llOwnerSay("Returning to unleased. Data was not correct.");
-            // state unleased;
-            setRentalState();
-        }
         llSetScale(SIZE_LEASED);
         string parcelName = (string)llGetParcelDetails(parcelPos, [PARCEL_DETAILS_NAME]);
         drawText(parcelName);
@@ -1193,20 +1215,13 @@ state leased
 
     listen(integer channel, string name, key id, string message)
     {
+        debug("You've got mail from " + name + ": " + message);
         dialogActiveFlag = FALSE;
         if (message == "Yes")
         {
             // getConfig();
-            if (RENT_STATE != 1 || DURATION == 0 || LEASER == "")
-            {
 
-                RENT_STATE = 0;
-                save_data();
-                statusUpdate("Returning to unleased. Data is not correct.");
-                // state unleased;
-                setRentalState();
-            }
-            else if (RENEWABLE)
+            if (RENEWABLE)
             {
                 integer timeleft = LEASED_UNTIL - llGetUnixTime();
 
@@ -1243,6 +1258,8 @@ state leased
 
     timer()
     {
+        debug("timer in " + scriptState);
+
         if (dialogActiveFlag)
         {
             dialogActiveFlag = FALSE;
@@ -1251,33 +1268,22 @@ state leased
         }
 
 
-        if(!DEBUG)
+        if(!DEBUG) {
+            debug("timer in " + scriptState + " set to 15 minutes");
             llSetTimerEvent(900); //15 minute checks
-        else
+        } else {
+            debug("timer in " + scriptState + " set to 30 seconds (debug)");
             llSetTimerEvent(30); // 30  second checks for
-
-
-        // getConfig();
-
-        if (RENT_STATE != 1 || DURATION == 0 || LEASER == "")
-        {
-
-            RENT_STATE = 0;
-            save_data();
-            statusUpdate("Returning to unleased. Data is not correct.");
-            state unleased;
         }
+
+        checkRentalState();
 
         integer count = llGetParcelPrimCount(parcelPos,PARCEL_COUNT_TOTAL, FALSE);
 
         if (count -1  > MAX_PRIMS && !SENT_PRIMWARNING) // no need to countthe sign, too.
         {
-            llInstantMessage(LEASERID, parcelRentalInfo() + " There are supposed to be no more than " + (string)MAX_PRIMS
-                + " prims rezzed, yet there are "
-                +(string) count + " prims rezzed on this parcel. Plese remove the excess.");
-            llInstantMessage(llGetOwner(),  parcelRentalInfo() + " There are supposed to be no more than " + (string)MAX_PRIMS
-                + " prims rezzed, yet there are "
-                +(string) count + " prims rezzed on this parcel, warning sent to " + LEASER );
+            llInstantMessage(LEASERID, "There are currently " + (string)count + " prims rezzed on your parcel " + parcelName + " at " + parcelHopURL() + ". The maximum allowed is " + (string)MAX_PRIMS + ". Please remove the excess prims.");
+            llInstantMessage(llGetOwner(), "There are currently " + (string)count + " prims rezzed on parcel " + parcelName + " at " + parcelHopURL() + ". The maximum allowed is " + (string)MAX_PRIMS + ". A warning has been sent to " + LEASER + ".");
             SENT_PRIMWARNING = TRUE;
         } else {
             SENT_PRIMWARNING = FALSE;
@@ -1332,18 +1338,11 @@ state leased
         touchedKey = llDetectedKey(0);
         touchStarted=llGetTime();
 
-        if(touchedKey == llGetOwner()) checkValidPosition();
-
-        // getConfig();
-
-        if (RENT_STATE != 1 || DURATION == 0 || LEASER == "" )
-        {
-
-            RENT_STATE = 0;
-            save_data();
-            statusUpdate("Returning to unleased. Data is not correct.");
-            state unleased;
+        if(touchedKey == llGetOwner()) {
+                        checkValidPosition();
         }
+
+        checkRentalState();
 
         if(LEASED_UNTIL < llGetUnixTime())
         statusUpdate("Claim due since " + rentRemainingHuman());
@@ -1416,6 +1415,7 @@ state waiting
             if(confirmPos == llGetPos()) {
                 confirmPos = <0,0,0>;
                 setBeacon("ready");
+                setRentalState();
             } else {
                 confirmPos = <0,0,0>;
                 llOwnerSay("Error, the sign has moved");
@@ -1429,19 +1429,5 @@ state waiting
     changed(integer change)
     {
         checkChanges(change);
-
-        // if(change & CHANGED_LINK) {
-        //     debug("CHANGED_LINK " + (string)change);
-        //     checkValidPosition();
-        //     // state waiting;
-        // } else if (change & CHANGED_INVENTORY) {
-        //     debug("CHANGED_INVENTORY " + (string)change);
-        //     getConfig();
-        // } else if (change & 0x8000) {
-        //     debug("Changed pos " + (string)change);
-        //     getConfig();
-        // } else {
-        //     debug("changed " + (string)change);
-        // }
     }
 }
