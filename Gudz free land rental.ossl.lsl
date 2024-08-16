@@ -327,7 +327,8 @@ dialog()
 }
 
 string regionNamePos() {
-    return llGetRegionName() + "/" + unTrailFloat(parcelPos.x) + "/" + unTrailFloat(parcelPos.y) + "/" + unTrailFloat(parcelPos.z) + "/";
+    // return llGetRegionName() + "/" + unTrailFloat(parcelPos.x) + "/" + unTrailFloat(parcelPos.y) + "/" + llRound(parcelPos.z) + "/";
+    return llGetRegionName() + "/" + llRound(parcelPos.x) + "/" + llRound(parcelPos.y) + "/" + llRound(parcelPos.z) + "/";
 }
 
 string parcelRentalInfo()
@@ -715,11 +716,17 @@ dialogValidatePos() {
         listener = llListen(channel,"","","");
 
         confirmPos = llGetPos();
+        string message = "Confirm you want to list this parcel for rent:\n" + parcelHopURL();
         llDialog(llGetOwner(),
-        "WARNING:\n"
-        + "Place the vendor OUTSIDE the rented parcel, but make sure the YELLOW MARK stays INSIDE the rented parcel. Then click the Checked button.",
-        ["Checked"],
-        channel);
+            "\n" + message + "\n" + rentalConditions(),
+            ["Start Renting"],
+            channel
+        );
+        // llDialog(llGetOwner(),
+        // "WARNING:\n"
+        // + "Place the vendor OUTSIDE the rented parcel, but make sure the YELLOW MARK stays INSIDE the rented parcel. Then click the Checked button.",
+        // ["Start Renting"],
+        // channel);
 
     } else {
         debug("state " + scriptState + ", switching to waiting"); 
@@ -1300,7 +1307,7 @@ state leased
             else if ( remaining < 0  && llAbs(remaining) < EXPIRE_GRACE * DAYSEC ) {
                 if (!WARNING_SENT)
                 {
-                    llInstantMessage(LEASERID, "Your claim needs to be renewed, please go to your parcel " + parcelHopURL() + " and touch the sign to claim it again! - " + parcelRentalInfo());
+                    llInstantMessage(LEASERID, "Your parcel rental needs to be renewed. Please go to your parcel at " + parcelHopURL() + " and touch the sign to claim it again!\n" + parcelRentalInfo());
                     llInstantMessage(llGetOwner(), "CLAIM DUE - " + parcelRentalInfo());
                     WARNING_SENT = TRUE;
                     save_data();
@@ -1314,8 +1321,8 @@ state leased
                 //vector signPos=llGetPos();
                 //llSetPos(parcelPos);
                 //llReturnObjectsByOwner(LEASERID,  OBJECT_RETURN_PARCEL_OWNER);
-                llInstantMessage(LEASERID, "Your claim has expired. Please cleanup the parcel. Objects owned by you on the parcel will be returned soon.");
-                llInstantMessage(llGetOwner(), "CLAIM EXPIRED: CLEANUP! -  " + parcelRentalInfo());
+                llInstantMessage(LEASERID, "Your parcel rental has expired. Please clean up the parcel. Objects owned by you on the parcel will be returned soon. Visit: " + parcelHopURL());
+                llInstantMessage(llGetOwner(), "CLAIM EXPIRED: CLEANUP! - " + parcelHopURL() + "\n" + parcelRentalInfo());
                 reclaimParcel();
                 RENT_STATE = 0;
                 save_data();
@@ -1324,7 +1331,7 @@ state leased
         }
         else if ( remaining < 0 )
         {
-            llInstantMessage(llGetOwner(), "CLAIM EXPIRED: CLEANUP! -  " + parcelRentalInfo());
+            llInstantMessage(llGetOwner(), "CLAIM EXPIRED: CLEANUP! -  " + parcelHopURL() + "\n" + parcelRentalInfo());
             reclaimParcel();
             RENT_STATE = 0;
             save_data();
@@ -1410,7 +1417,7 @@ state waiting
 
     listen(integer channel, string name, key id, string message)
     {
-        if(id == llGetOwner() && message == "Checked")
+        if(id == llGetOwner() && message == "Start Renting")
         {
             if(confirmPos == llGetPos()) {
                 confirmPos = <0,0,0>;
