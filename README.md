@@ -10,6 +10,23 @@ In the future, this script will be adjusted to also handle paid rentals.
 - **Full Ownership**: The land is technically sold to the user, giving them full ownership and control over their parcel without needing group tricks.
 - **Automatic Reclaim**: Expired or abandoned land is sold back to the vendor owner.
 
+## Requirements
+
+The script requires these functions to be enabled on the simulator:
+
+- osGetNotecard
+- osGetGridLoginURI
+- osGetGridGatekeeperURI
+- osSetParcelDetails
+- osInviteToGroup
+- osDrawText
+- osGetDrawStringSize
+- osMovePen
+- osSetDynamicTextureDataBlendFace
+- osSetFontName
+- osSetFontSize
+- osSetPenColor
+
 ## Usage
 
 ### For Tenants
