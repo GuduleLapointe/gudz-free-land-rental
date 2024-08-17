@@ -53,23 +53,24 @@ string  DEBUGINFO  = "0.041,1,100,1,0.0104,1"; // Default config info in debug m
  * Or don't complain.
  */
 
-float DURATION;     // DAYS  lease is claimed
-float MAX_DURATION;  // maximum length in days
-integer MAX_PRIMS;    // number of prims
-integer RENEWABLE = FALSE; // can they renew?
-float EXPIRE_REMINDER ; //Day allowed to renew earlier
-float EXPIRE_GRACE ; // Days allowed to miss payment
+float DURATION;                     // DAYS  lease is claimed
+float MAX_DURATION;                 // maximum length in days
+integer MAX_PRIMS;                  // number of prims
+integer RENEWABLE = FALSE;          // can they renew?
+float EXPIRE_REMINDER ;             // Day allowed to renew earlier
+float EXPIRE_GRACE ;                // Days allowed to miss payment
 
-vector TERMINAL_POS; // Last position of the terminal
-integer RENT_STATE = 0;  // 0 is unleased, 1 = leased
-string LEASER = "";    // name of lessor
-key LEASERID;          // their UUID
-integer LEASED_UNTIL; // unix time stamp
-integer DAYSEC = 86400;         // a constant
-integer WARNING_SENT = FALSE;    // did they get an im?
-integer SENT_PRIMWARNING = FALSE;    // did they get an im about going over prim count?
-integer listener;    // ID for active listener
-key touchedKey ;     // the key of whoever touched us last (not necessarily the renter)
+vector TERMINAL_POS;                // Last position of the terminal
+integer RENT_STATE = 0;             // 0 is unleased, 1 = leased
+string LEASER = "";                 // name of lessor
+key LEASERID;                       // their UUID
+integer LEASED_UNTIL;               // unix time stamp
+integer DAYSEC = 86400;             // a constant
+integer WARNING_SENT = FALSE;       // did they get an im?
+integer SENT_PRIMWARNING = FALSE;   // did they get an im about going over prim count?
+integer listener;                   // ID for active listener
+integer listenerAdmin;              // ID for active listener for admin dialog
+key touchedKey ;                    // the key of whoever touched us last (not necessarily the renter)
 float touchStarted;
 string scriptState;
 
@@ -238,14 +239,15 @@ dialog() {
     llListenRemove(listener);
     integer channel = llCeil(llFrand(1000000)) + 100000 * -1; // negative channel # cannot be typed
     listener = llListen(channel,"","","");
-    if(isRented() ) {
+    if(isRented() && touchedKey == LEASERID) {
         llDialog(touchedKey,
         "Leased until " + Unix2PST_PDT(LEASED_UNTIL)
         + "\n(" + rentRemainingHuman() + " remaining)"
         + "\nAbandon land?"
-        ,["Abandon","Keep"],channel);
-    } else {
-        llDialog(touchedKey,"Do you wish to claim this parcel?",["Yes","-","No"],channel);
+        ,["Abandon"],channel);
+    } else if(!isRented()) {
+        string message = "Click Rent to claim this parcel\n" + rentalConditions();
+        llDialog(touchedKey,message,["Rent"],channel);
     }
     llSetTimerEvent(30);
     llSetText("",<1,0,0>, 1.0);
@@ -254,6 +256,99 @@ dialog() {
     dialogActiveFlag  = TRUE;
 }
 
+integer listernerAdmin;
+
+dialogAdmin() {
+    llListenRemove(listener);
+    integer channel = llCeil(llFrand(1000000)) + 100000 * -1; // negative channel # cannot be typed
+    listenerAdmin = llListen(channel,"","","");
+    list buttons;
+    string message;
+    if(isRented()) {
+        message = "Leased to " + LEASER + " until " 
+        + Unix2PST_PDT(LEASED_UNTIL) + " (" + rentRemainingHuman() + " remaining)";
+        buttons += [ "Reclaim" ];
+    }
+    buttons += ["Reset Script"];
+    llDialog(touchedKey,
+    "\n" + message,    
+    buttons,channel);
+}
+
+dialogProcess(integer channel, string name, key id, string message) {
+    dialogActiveFlag = FALSE;
+
+    if(listenerAdmin && id == llGetOwner()) {
+        llListenRemove(listenerAdmin);
+        if(message == "Reset Script") {
+            notifyOwner("Reset Script requested by owner");
+            llResetScript();
+        } else if (message == "Reclaim") {
+            reclaimParcel();
+            return;
+        }
+        notifyOwner("Unhandled admin response " + message);
+        return;
+    }
+
+    llListenRemove(listener);
+    llSetTimerEvent(0);
+
+    if(message == "Rent" && listener && scriptState == "unleased") {
+        notifyAvatar(touchedKey,"Thanks for claiming this spot! Please wait a few moments...");
+        RENT_STATE = 1;
+        LEASER = llKey2Name(touchedKey);
+        string shortName = llStringTrim(strReplace( llList2String(llParseStringKeepNulls(LEASER,["@"],[]), 0), ".", " "), STRING_TRIM);
+        LEASERID = touchedKey;
+        LEASED_UNTIL = llGetUnixTime() + (integer) (DAYSEC * DURATION);
+
+        WARNING_SENT = FALSE;
+        save_data();
+        notifyOwner(parcelRentalInfo());
+        list rules =[
+            PARCEL_DETAILS_NAME, shortName,
+            PARCEL_DETAILS_DESC, LEASER + "'s land; "
+                + parcelArea + " sqm; "
+                + MAX_PRIMS + " prims allowed.",
+            PARCEL_DETAILS_OWNER, LEASERID,
+            PARCEL_DETAILS_GROUP, NULL_KEY,
+            PARCEL_DETAILS_CLAIMDATE, 0
+            ];
+        osSetParcelDetails(parcelPos, rules);
+        llSetText("",<1,0,0>, 1.0);
+        notifyAvatar(LEASERID,"Your parcel is ready.\n"
+        + parcelHopURL() + "\n" + "Please join the group to receive status updates.");
+        osInviteToGroup(LEASERID);
+        setRentalState(); // state leased;
+    // } else if (message == "Yes") {
+    //      // No more confirmation for renewal, rental is renewed on click.
+    //     // getConfig();
+
+    //     if (RENEWABLE) {
+    //         integer timeleft = LEASED_UNTIL - llGetUnixTime();
+
+    //         if (DAYSEC + timeleft > MAX_DURATION * DAYSEC) {
+    //             notifyAvatar(LEASERID,"Sorry, you can not claim more than the max time");
+    //         } else {
+    //             WARNING_SENT = FALSE;
+    //             LEASED_UNTIL += (integer) DURATION;
+    //             save_data();
+    //             llSetScale(SIZE_LEASED);
+    //             //setTexture(texture_leased,textureSides);
+    //             statusUpdate("Renewed" + parcelRentalInfo());
+    //             // notifyOwner("Renewed: " + parcelRentalInfo());
+    //         }
+    //     }
+    //     else {
+    //         notifyAvatar(LEASERID,"Sorry you can not renew at this time.");
+    //     }
+    } else if (message == "Abandon" && listener && scriptState == "leased") {
+        key FORMERLEASERID=LEASERID;
+        reclaimParcel();
+        notifyAvatar(FORMERLEASERID, "You abandonned your land, it has been reset to the estate owner. Please cleanup the parcel. Objects owned by you on the parcel will be returned soon.");
+        // state unleased;
+    }
+}
 string regionNamePos() {
     // return llGetRegionName() + "/" + unTrailFloat(parcelPos.x) + "/" + unTrailFloat(parcelPos.y) + "/" + llRound(parcelPos.z) + "/";
     return llGetRegionName() + "/" + llRound(parcelPos.x) + "/" + llRound(parcelPos.y) + "/" + llRound(parcelPos.z) + "/";
@@ -347,6 +442,7 @@ save_data() {
 }
 
 reclaimParcel() {
+    RENT_STATE = 0;
     LEASER="";
     LEASERID=NULL_KEY;
     list rules =[
@@ -360,6 +456,7 @@ reclaimParcel() {
         PARCEL_DETAILS_CLAIMDATE, 0];
     osSetParcelDetails(parcelPos, rules);
     save_data();
+    setRentalState();
 }
 
 string strReplace(string str, string search, string replace) {
@@ -997,37 +1094,7 @@ state unleased {
     }
 
     listen(integer channel, string name, key id, string message) {
-        dialogActiveFlag = FALSE;
-        llSetTimerEvent(0);
-        llListenRemove(listener);
-
-        if (message == "Yes") {
-            notifyAvatar(touchedKey,"Thanks for claiming this spot! Please wait a few moments...");
-            RENT_STATE = 1;
-            LEASER = llKey2Name(touchedKey);
-            string shortName = llStringTrim(strReplace( llList2String(llParseStringKeepNulls(LEASER,["@"],[]), 0), ".", " "), STRING_TRIM);
-            LEASERID = touchedKey;
-            LEASED_UNTIL = llGetUnixTime() + (integer) (DAYSEC * DURATION);
-
-            WARNING_SENT = FALSE;
-            save_data();
-            notifyOwner(parcelRentalInfo());
-            list rules =[
-                PARCEL_DETAILS_NAME, shortName,
-                PARCEL_DETAILS_DESC, LEASER + "'s land; "
-                    + parcelArea + " sqm; "
-                    + MAX_PRIMS + " prims allowed.",
-                PARCEL_DETAILS_OWNER, LEASERID,
-                PARCEL_DETAILS_GROUP, NULL_KEY,
-                PARCEL_DETAILS_CLAIMDATE, 0
-                ];
-            osSetParcelDetails(parcelPos, rules);
-            llSetText("",<1,0,0>, 1.0);
-            notifyAvatar(LEASERID,"Your parcel is ready.\n"
-            + parcelHopURL() + "\n" + "Please join the group to receive status updates.");
-            osInviteToGroup(LEASERID);
-            setRentalState(); // state leased;
-        }
+        dialogProcess(channel, name, id, message);
     }
 
     touch_start(integer total_number) {
@@ -1040,22 +1107,18 @@ state unleased {
 
         // float touchElapsed = llGetTime() - touchStarted;
         if (touchedKey == llGetOwner() && llGetTime() - touchStarted > 2) {
-            llOwnerSay("/me position check forced by long click");
-            state waiting;
+            llOwnerSay("/me check forced by long click");
+            checkValidPosition();
+            dialogAdmin();
         }
         else {
-            if(touchedKey == llGetOwner()) {
-                checkValidPosition();
-            }
-
-            // getConfig();
+            dialog();
             notifyAvatar(touchedKey, rentalConditions() );
             // TODO: set a config value for covenant notecard to give to users
             // if(llGetInventoryNumber(INVENTORY_NOTECARD) > 0 ) {
             //     llGiveInventory(touchedKey,llGetInventoryName(INVENTORY_NOTECARD,0));
             //     notifyAvatar(touchedKey, "Please read the covenant before renting");
             // }
-            dialog();
         }
     }
 
@@ -1095,40 +1158,7 @@ state leased {
     }
 
     listen(integer channel, string name, key id, string message) {
-        debug("You've got mail from " + name + ": " + message);
-        dialogActiveFlag = FALSE;
-        if (message == "Yes") {
-            // getConfig();
-
-            if (RENEWABLE) {
-                integer timeleft = LEASED_UNTIL - llGetUnixTime();
-
-
-                if (DAYSEC + timeleft > MAX_DURATION * DAYSEC) {
-                    notifyAvatar(LEASERID,"Sorry, you can not claim more than the max time");
-                }
-                else {
-                    WARNING_SENT = FALSE;
-                    LEASED_UNTIL += (integer) DURATION;
-                    save_data();
-                    llSetScale(SIZE_LEASED);
-                    //setTexture(texture_leased,textureSides);
-                    statusUpdate("Renewed" + parcelRentalInfo());
-                    // notifyOwner("Renewed: " + parcelRentalInfo());
-                }
-            }
-            else {
-                notifyAvatar(LEASERID,"Sorry you can not renew at this time.");
-            }
-        } else if (message == "Abandon") {
-            key FORMERLEASERID=LEASERID;
-            reclaimParcel();
-            notifyAvatar(FORMERLEASERID, "You abandonned your land, it has been reset to the estate owner. Please cleanup the parcel. Objects owned by you on the parcel will be returned soon.");
-            RENT_STATE = 0;
-            save_data();
-            // state unleased;
-            setRentalState();
-        }
+        dialogProcess(channel, name, id, message);
     }
 
     timer() {
@@ -1185,55 +1215,58 @@ state leased {
                 notifyAvatar(LEASERID, "Your parcel rental has expired. Please clean up the parcel. Objects owned by you on the parcel will be returned soon. Visit: " + parcelHopURL());
                 notifyOwner("CLAIM EXPIRED: CLEANUP! - " + parcelHopURL() + "\n" + parcelRentalInfo());
                 reclaimParcel();
-                // TODO: check return objects and enable
-                //llReturnObjectsByOwner(LEASERID,  OBJECT_RETURN_PARCEL_OWNER);
-                RENT_STATE = 0;
-                save_data();
-                state unleased;
+                state unleased; // TODO: Really necessary?
             }
         }
         else if ( remaining < 0 ) {
             notifyOwner("CLAIM EXPIRED: CLEANUP! -  " + parcelHopURL() + "\n" + parcelRentalInfo());
             reclaimParcel();
-            RENT_STATE = 0;
-            save_data();
-            state unleased;
-            //state default;
+            state unleased; // TODO: Really necessary?
         }
     }
 
     touch_start(integer total_number) {
         touchedKey = llDetectedKey(0);
         touchStarted=llGetTime();
+    }
 
+    touch_end(integer index) {
+        touchedKey = llDetectedKey(0);
         if(touchedKey == llGetOwner()) {
                         checkValidPosition();
         }
 
-        checkRentalState();
+        // float touchElapsed = llGetTime() - touchStarted;
+        if (touchedKey == llGetOwner() && llGetTime() - touchStarted > 2) {
+            dialogAdmin();
+        } else {
+            checkRentalState();
 
-        if(LEASED_UNTIL < llGetUnixTime())
-        statusUpdate("Claim due since " + rentRemainingHuman());
-        else
-        llWhisper(0, rentalInfo());
+            if(LEASED_UNTIL < llGetUnixTime())
+            statusUpdate("Claim due since " + rentRemainingHuman());
+            else
+            llWhisper(0, rentalInfo());
 
-        // same as money
-        if (touchedKey == LEASERID && RENEWABLE) {
-            string parcelName = (string)llGetParcelDetails(parcelPos, [PARCEL_DETAILS_NAME]);
-            drawText(parcelName);
+            // same as money
+            if (touchedKey == LEASERID && RENEWABLE) {
+                string parcelName = (string)llGetParcelDetails(parcelPos, [PARCEL_DETAILS_NAME]);
+                drawText(parcelName);
 
-            LEASED_UNTIL = llGetUnixTime() + (integer) (DAYSEC * DURATION);
-            save_data();
-            notifyAvatar(LEASERID, "Renewed until " + Unix2PST_PDT(LEASED_UNTIL));
-            dialog();
-        // } else {
-        //     notifyAvatar(touchedKey, "Leased until " + Unix2PST_PDT(LEASED_UNTIL));
+                LEASED_UNTIL = llGetUnixTime() + (integer) (DAYSEC * DURATION);
+                save_data();
+                notifyAvatar(LEASERID, "Renewed until " + Unix2PST_PDT(LEASED_UNTIL));
+                dialog();
+            // } else {
+            //     notifyAvatar(touchedKey, "Leased until " + Unix2PST_PDT(LEASED_UNTIL));
+            }
+
+            // same as money
+            if (touchedKey == LEASERID && !RENEWABLE) {
+                notifyAvatar(LEASERID,"The parcel cannot be claimed again");
+            }
+
         }
 
-        // same as money
-        if (touchedKey == LEASERID && !RENEWABLE) {
-             notifyAvatar(LEASERID,"The parcel cannot be claimed again");
-        }
     }
     on_rez(integer start_param) {
         state waiting;
@@ -1268,6 +1301,7 @@ state waiting {
             }
         }
     }
+    
     on_rez(integer start_param) {
         state waiting;
     }

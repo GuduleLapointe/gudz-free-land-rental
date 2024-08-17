@@ -12,7 +12,7 @@ In the future, this script will be adjusted to also handle paid rentals.
 
 ## Requirements
 
-The script requires these functions to be enabled on the simulator:
+The script requires these functions to be enabled in OpenSimulator configuration:
 
 - osGetNotecard
 - osGetGridLoginURI
