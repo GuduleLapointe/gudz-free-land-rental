@@ -71,6 +71,7 @@ integer WARNING_SENT = FALSE;       // did they get an im?
 integer SENT_PRIMWARNING = FALSE;   // did they get an im about going over prim count?
 integer listener;                   // ID for active listener
 integer listenerAdmin;              // ID for active listener for admin dialog
+integer listenerRestore;
 key touchedKey ;                    // the key of whoever touched us last (not necessarily the renter)
 float touchStarted;
 string scriptState;
@@ -81,6 +82,8 @@ vector signPos;
 integer parcelArea;
 string parcelName;
 list parcelDetails;
+
+list avatarKeys;
 
 integer IDX_DURATION = 0;
 integer IDX_MAX_DURATION = 1;
@@ -235,10 +238,15 @@ string rentalConditions() {
     return message;
 }
 
+integer randomChannel() {
+    integer channel = llCeil(llFrand(-1000000)) - 10000; // negative channel # cannot be typed
+    return channel;
+}
+
 integer dialogActiveFlag ;    // TRUE when we have up a dialog box, used by the timer to clear out the listener if no response is given
 dialog() {
     llListenRemove(listener);
-    integer channel = llCeil(llFrand(1000000)) + 100000 * -1; // negative channel # cannot be typed
+    integer channel = randomChannel();
     listener = llListen(channel,"","","");
     if(isRented() && touchedKey == LEASERID) {
         llDialog(touchedKey,
@@ -257,11 +265,9 @@ dialog() {
     dialogActiveFlag  = TRUE;
 }
 
-integer listernerAdmin;
-
 dialogAdmin() {
-    llListenRemove(listener);
-    integer channel = llCeil(llFrand(1000000)) + 100000 * -1; // negative channel # cannot be typed
+    llListenRemove(listenerAdmin);
+    integer channel = randomChannel();
     listenerAdmin = llListen(channel,"","","");
     list buttons;
     string message;
@@ -269,6 +275,8 @@ dialogAdmin() {
         message = "Leased to " + LEASER + " until " 
         + Unix2PST_PDT(LEASED_UNTIL) + " (" + rentRemainingHuman() + " remaining)";
         buttons += [ "Reclaim" ];
+    } else {
+        buttons += [ "Restore Renter" ];
     }
     // buttons += ["Return Objects"];
     // buttons += ["Empty parcel"];
@@ -276,6 +284,41 @@ dialogAdmin() {
     llDialog(touchedKey,
     "\n" + message,    
     buttons,channel);
+}
+
+restoreRenter() {
+    llListenRemove(listenerRestore);
+    integer channel = randomChannel();
+    listenerRestore = llListen(channel,"","","");
+
+    key parcelID = llGetParcelDetails(parcelPos, [PARCEL_DETAILS_ID]);
+    key parcelOwnerID = llGetParcelDetails(parcelPos, [PARCEL_DETAILS_OWNER])[0];
+
+    notifyOwner("Collecting owners data");
+    list objectOwners = llGetParcelPrimOwners(parcelPos);
+
+    integer i;
+    integer count = llGetListLength(objectOwners);
+    string message = "Owners of objects found in the parcel:";
+    list buttons;
+    for (i = 0; i < count; i += 2)
+    {
+        key objectOwnerID = llList2Key(objectOwners, i);
+        if (objectOwnerID != parcelOwnerID)
+        {
+            integer count = llList2Integer(objectOwners, i + 1);
+            string objectOwnerName = getShortName(osKey2Name(objectOwnerID));
+            avatarKeys += [ objectOwnerID, objectOwnerName ];
+            message += "\n " + objectOwnerName + " (" + count + ")";
+            buttons += [ objectOwnerName ];
+        }
+    }
+
+    llDialog(llGetOwner(),
+        "\n" + message,
+        buttons,
+        channel
+    );
 }
 
 returnObjects()
@@ -306,80 +349,101 @@ returnObjects()
         if (objectOwnerID != parcelOwnerID)
         {
             integer count = llList2Integer(objectOwners, i + 1);
-            string objectOwner = osKey2Name(objectOwnerID) + " (" + objectOwnerID + ")";
-            notifyAvatar(parcelOwnerID, "returning " + count + " objects to " + objectOwner);
+            string objectOwnerName = osKey2Name(objectOwnerID) + " (" + objectOwnerID + ")";
+            notifyAvatar(parcelOwnerID, "returning " + count + " objects to " + objectOwnerName);
             // Retourner les objets possédés par cet avatar
             // llReturnObjectsByOwner(objectOwnerID, OBJECT_RETURN_PARCEL );
         }
     }
 }
 
+startRent(key avatarID) {
+    RENT_STATE = 1;
+    LEASER = osKey2Name(avatarID);
+    LEASERID = avatarID;
+    LEASED_UNTIL = llGetUnixTime() + (integer) (DAYSEC * DURATION);
+
+    WARNING_SENT = FALSE;
+    save_data();
+    notifyOwner(parcelRentalInfo());
+    setRentedParcelData();
+    llSetText("",<1,0,0>, 1.0);
+}
+
 dialogProcess(integer channel, string name, key id, string message) {
     dialogActiveFlag = FALSE;
-
-    if(listenerAdmin && id == llGetOwner()) {
-        llListenRemove(listenerAdmin);
-        if(message == "Reset Script") {
-            notifyOwner("Reset Script requested by owner");
-            llResetScript();
-        } else if (message == "Reclaim") {
-            reclaimParcel();
+    
+    if(id == llGetOwner()) {
+        if(listenerAdmin) {
+            llListenRemove(listenerAdmin);
+            listenerAdmin = 0;
+            if(message == "Reset Script") {
+                notifyOwner("Reset Script requested by owner");
+                llResetScript();
+            } else if (message == "Reclaim") {
+                reclaimParcel();
+                return;
+            } else if (message == "Restore Renter") {
+                restoreRenter();
+                return;
+            } else if (message == "Return Objects") {
+                // Not implemented
+                returnObjects();
+                return;
+            }
+            notifyOwner("Unhandled admin response " + message);
             return;
-        } else if (message == "Return Objects") {
-            // Not implemented
-            returnObjects();
-            return;
+        } else if (listenerRestore) {
+            llListenRemove(listenerRestore);
+            listenerRestore = 0;
+            notifyOwner("processing " + message);
+            // notifyOwner("restoring " + avatarID + " rental");
+            // startRent(touchedKey);
+            // notifyAvatar(LEASERID,"Your parcel is ready.\n"
+            // + parcelHopURL() + "\n" + "Please join the group to receive status updates.");
+            // osInviteToGroup(LEASERID);
+            // setRentalState(); // state leased;
         }
-        notifyOwner("Unhandled admin response " + message);
         return;
-    }
+    } else {
+        llListenRemove(listener);
+        llSetTimerEvent(0);
 
-    llListenRemove(listener);
-    llSetTimerEvent(0);
+        if(message == "Rent" && listener && scriptState == "unleased") {
+            notifyAvatar(touchedKey,"Thanks for claiming this spot! Please wait a few moments...");
+            startRent(touchedKey);
+            notifyAvatar(LEASERID,"Your parcel is ready.\n"
+            + parcelHopURL() + "\n" + "Please join the group to receive status updates.");
+            osInviteToGroup(LEASERID);
+            setRentalState(); // state leased;
+        // } else if (message == "Yes") {
+        //      // No more confirmation for renewal, rental is renewed on click.
+        //     // getConfig();
 
-    if(message == "Rent" && listener && scriptState == "unleased") {
-        notifyAvatar(touchedKey,"Thanks for claiming this spot! Please wait a few moments...");
-        RENT_STATE = 1;
-        LEASER = osKey2Name(touchedKey);
-        LEASERID = touchedKey;
-        LEASED_UNTIL = llGetUnixTime() + (integer) (DAYSEC * DURATION);
+        //     if (RENEWABLE) {
+        //         integer timeleft = LEASED_UNTIL - llGetUnixTime();
 
-        WARNING_SENT = FALSE;
-        save_data();
-        notifyOwner(parcelRentalInfo());
-        setRentedParcelData();
-        llSetText("",<1,0,0>, 1.0);
-        notifyAvatar(LEASERID,"Your parcel is ready.\n"
-        + parcelHopURL() + "\n" + "Please join the group to receive status updates.");
-        osInviteToGroup(LEASERID);
-        setRentalState(); // state leased;
-    // } else if (message == "Yes") {
-    //      // No more confirmation for renewal, rental is renewed on click.
-    //     // getConfig();
-
-    //     if (RENEWABLE) {
-    //         integer timeleft = LEASED_UNTIL - llGetUnixTime();
-
-    //         if (DAYSEC + timeleft > MAX_DURATION * DAYSEC) {
-    //             notifyAvatar(LEASERID,"Sorry, you can not claim more than the max time");
-    //         } else {
-    //             WARNING_SENT = FALSE;
-    //             LEASED_UNTIL += (integer) DURATION;
-    //             save_data();
-    //             llSetScale(SIZE_LEASED);
-    //             //setTexture(texture_leased,textureSides);
-    //             statusUpdate("Renewed" + parcelRentalInfo());
-    //             // notifyOwner("Renewed: " + parcelRentalInfo());
-    //         }
-    //     }
-    //     else {
-    //         notifyAvatar(LEASERID,"Sorry you can not renew at this time.");
-    //     }
-    } else if (message == "Abandon" && listener && scriptState == "leased") {
-        FORMERLEASERID=LEASERID;
-        reclaimParcel();
-        notifyAvatar(FORMERLEASERID, "You abandonned your land, it has been reset to the estate owner. Please cleanup the parcel. Objects owned by you on the parcel will be returned soon.");
-        // state unleased;
+        //         if (DAYSEC + timeleft > MAX_DURATION * DAYSEC) {
+        //             notifyAvatar(LEASERID,"Sorry, you can not claim more than the max time");
+        //         } else {
+        //             WARNING_SENT = FALSE;
+        //             LEASED_UNTIL += (integer) DURATION;
+        //             save_data();
+        //             llSetScale(SIZE_LEASED);
+        //             //setTexture(texture_leased,textureSides);
+        //             statusUpdate("Renewed" + parcelRentalInfo());
+        //             // notifyOwner("Renewed: " + parcelRentalInfo());
+        //         }
+        //     }
+        //     else {
+        //         notifyAvatar(LEASERID,"Sorry you can not renew at this time.");
+        //     }
+        } else if (message == "Abandon" && listener && scriptState == "leased") {
+            FORMERLEASERID=LEASERID;
+            reclaimParcel();
+            notifyAvatar(FORMERLEASERID, "You abandonned your land, it has been reset to the estate owner. Please cleanup the parcel. Objects owned by you on the parcel will be returned soon.");
+            // state unleased;
+        }
     }
 }
 string regionNamePos() {
@@ -754,7 +818,7 @@ dialogValidatePos() {
         if(listener != 0) {
             llListenRemove(listener);
         }
-        integer channel = llCeil(llFrand(1000000)) + 100000 * -1; // negative channel # cannot be typed
+        integer channel = randomChannel();
         listener = llListen(channel,"","","");
 
         confirmPos = llGetPos();
@@ -958,13 +1022,13 @@ string unTrailVector(vector v) {
     return "<" + unTrailFloat(v.x) + "," + unTrailFloat(v.y) +","+ unTrailFloat(v.z) + ">";
 }
 
-string getLeaserShortName() {
-    if(LEASER == "") return "";
-    return llStringTrim(strReplace( llList2String(llParseStringKeepNulls(LEASER,["@"],[]), 0), ".", " "), STRING_TRIM);
+string getShortName(string name) {
+    if(name == "") return "";
+    return llStringTrim(strReplace( llList2String(llParseStringKeepNulls(name,["@"],[]), 0), ".", " "), STRING_TRIM);
 }
 
 setRentedParcelData() {
-    string shortName = getLeaserShortName();
+    string shortName = getShortName(LEASER);
     list rules =[
         PARCEL_DETAILS_NAME, shortName,
         PARCEL_DETAILS_DESC, LEASER + "'s land; "
@@ -985,7 +1049,7 @@ setRentalState() {
         llSetScale(SIZE_LEASED);
         // parcelName = (string)llGetParcelDetails(parcelPos, [PARCEL_DETAILS_NAME]);
         setRentedParcelData();
-        string shortName = getLeaserShortName();
+        string shortName = getShortName(LEASER);
         drawText(shortName);
         llSetText("",<0,0,0>, 1.0);
 
@@ -1166,7 +1230,6 @@ state unleased {
 
         // float touchElapsed = llGetTime() - touchStarted;
         if (touchedKey == llGetOwner() && llGetTime() - touchStarted > 2) {
-            llOwnerSay("/me check forced by long click");
             checkValidPosition();
             dialogAdmin();
         }

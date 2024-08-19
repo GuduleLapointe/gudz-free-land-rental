@@ -12,19 +12,20 @@ In the future, this script will be adjusted to also handle paid rentals.
 
 ## Requirements
 
-The script requires these functions to be enabled in OpenSimulator configuration:
+The script requires these functions to be enabled for Estate Owners in OpenSimulator configuration:
 
-- osGetNotecard
-- osGetGridLoginURI
-- osGetGridGatekeeperURI
-- osSetParcelDetails
-- osInviteToGroup
 - osDrawText
 - osGetDrawStringSize
+- osGetGridGatekeeperURI
+- osGetGridLoginURI
+- osGetNotecard
+- osInviteToGroup
+- osKey2Name
 - osMovePen
 - osSetDynamicTextureDataBlendFace
 - osSetFontName
 - osSetFontSize
+- osSetParcelDetails
 - osSetPenColor
 
 ## Usage
@@ -88,15 +89,18 @@ The empty third field used to be set to MAX_PRIMS, but it is now calculated from
 ## To Do
 
 1. Fix current functionalities:
-    - √ Notification queue
-    - rental doesn't seem to be cleared after grace period
+    - √ Fix rental not restored after updates (fixed in 1.6.5)
+    - √ Fix messages not sent to HG avatars when offline (added notification queue)
+    - √ Fix position not saved in rent data, causing new check triggered on reset
+    - Keep notification queue after script reset
     - Clear rent data (object desc) if owner changed
     - Clear rental status if parcel changed
     - Shorter rental data format (only save in object desc the live rental data, not settings that are now handled by config file)
+    - Also notify owner to clean terrain when abandoned (currently only on rental expiration)
 
 2. Add new functionalities:
+    - √ New feature: restore rental, based on prims found in the parcel (1.6.6)
     - Use different prims for sign and renter name, hide and show accordingly, to avoid resizing single prim and allow more creative designs
-    - Also notify owner to clean terrain when abandoned (currently only on rental expiration)
     - Option to limit to local grid avatars
     - Option for maximum number of parcels per user, or maximum area
     - Check that the owner has estate rights before activating
