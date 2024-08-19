@@ -396,13 +396,19 @@ dialogProcess(integer channel, string name, key id, string message) {
         } else if (listenerRestore) {
             llListenRemove(listenerRestore);
             listenerRestore = 0;
-            notifyOwner("processing " + message);
-            // notifyOwner("restoring " + avatarID + " rental");
-            // startRent(touchedKey);
-            // notifyAvatar(LEASERID,"Your parcel is ready.\n"
-            // + parcelHopURL() + "\n" + "Please join the group to receive status updates.");
-            // osInviteToGroup(LEASERID);
-            // setRentalState(); // state leased;
+            integer avatarIndex = llListFindList(avatarKeys, [message]);
+            if (avatarIndex != -1) {
+                key avatarID = llList2Key(avatarKeys, avatarIndex - 1);
+                string avatarName = osKey2Name(avatarID);
+                notifyOwner("restoring " + avatarName + "'s rental");
+                startRent(avatarID);
+                notifyAvatar( avatarID, "Your parcel has been restored by " + osKey2Name(id)
+                + "\n" + parcelHopURL() );
+                // osInviteToGroup(LEASERID);
+                setRentalState(); // state leased;
+            } else {
+                notifyOwner("Could not find an avatar named " + message);
+            }
         }
         return;
     } else {
