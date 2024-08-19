@@ -101,6 +101,7 @@ The empty third field used to be set to MAX_PRIMS, but it is now calculated from
 2. Add new functionalities:
     - √ New feature: restore rental, based on prims found in the parcel (1.6.6)
     - Use different prims for sign and renter name, hide and show accordingly, to avoid resizing single prim and allow more creative designs
+    - allow setting times in years, months, days, hours
     - Option to limit to local grid avatars
     - Option for maximum number of parcels per user, or maximum area
     - Check that the owner has estate rights before activating
